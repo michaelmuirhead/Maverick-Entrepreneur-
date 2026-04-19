@@ -3,11 +3,25 @@ import type { GameState } from "@/game/types";
 
 const KEY = "maverick.save.v1";
 
+/** Backfill fields added in later releases so old saves don't crash. */
+export function migrateSave(state: GameState): GameState {
+  return {
+    ...state,
+    products: state.products.map(p => ({
+      ...p,
+      // v1.1: marketingBudget
+      marketingBudget: typeof (p as { marketingBudget?: number }).marketingBudget === "number"
+        ? p.marketingBudget
+        : 0,
+    })),
+  };
+}
+
 export async function loadGame(): Promise<GameState | null> {
   if (typeof window === "undefined") return null;
   try {
     const v = await idbGet<GameState>(KEY);
-    return v ?? null;
+    return v ? migrateSave(v) : null;
   } catch {
     return null;
   }
@@ -32,5 +46,5 @@ export function importSaveJSON(json: string): GameState {
   if (!obj || typeof obj !== "object" || typeof obj.seed !== "string" || typeof obj.week !== "number") {
     throw new Error("That doesn't look like a Maverick save file.");
   }
-  return obj as GameState;
+  return migrateSave(obj as GameState);
 }

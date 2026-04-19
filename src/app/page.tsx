@@ -9,6 +9,7 @@ import { ProductList } from "@/components/ProductList";
 import { EventLog } from "@/components/EventLog";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
+import { NextMilestone } from "@/components/NextMilestone";
 
 export default function HQPage() {
   const router = useRouter();
@@ -31,6 +32,7 @@ export default function HQPage() {
     <main className="app-shell">
       <HqHeader />
       <KpiGrid />
+      <NextMilestone />
       <h2 className="sec-head" style={{ marginTop: 18 }}>MRR — last 12 weeks <span className="tag">billing</span></h2>
       <MrrChart />
       <h2 className="sec-head">Your products <span className="tag">{state.products.length}</span></h2>

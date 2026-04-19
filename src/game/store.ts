@@ -25,6 +25,7 @@ interface GameStore {
   // Product actions
   renameProduct: (id: string, name: string) => void;
   setDevBudget: (id: string, budget: number) => void;
+  setMarketingBudget: (id: string, budget: number) => void;
   assignEngineer: (productId: string, employeeId: string) => void;
   unassignEngineer: (productId: string, employeeId: string) => void;
   designNewProduct: (name: string, category: ProductCategory, pricePerUser: number) => void;
@@ -77,6 +78,10 @@ export const useGame = create<GameStore>((set, get) => ({
     ...s, products: s.products.map(p => p.id === id ? { ...p, devBudget: Math.max(0, budget) } : p),
   })),
 
+  setMarketingBudget: (id, budget) => update(set, get, (s) => ({
+    ...s, products: s.products.map(p => p.id === id ? { ...p, marketingBudget: Math.max(0, budget) } : p),
+  })),
+
   assignEngineer: (productId, employeeId) => update(set, get, (s) => ({
     ...s,
     employees: s.employees.map(e => e.id === employeeId ? { ...e, assignedProductId: productId } : e),
@@ -111,6 +116,7 @@ export const useGame = create<GameStore>((set, get) => ({
       pricePerUser,
       devProgress: 0,
       devBudget: 0,
+      marketingBudget: 0,
       weeksAtStage: 0,
       weeksSinceLaunch: 0,
       ageWeeks: 0,

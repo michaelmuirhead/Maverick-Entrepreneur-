@@ -11,6 +11,7 @@ export default function ProductsPage() {
   const state = useGame(s => s.state);
   const designNew = useGame(s => s.designNewProduct);
   const setBudget = useGame(s => s.setDevBudget);
+  const setMarketing = useGame(s => s.setMarketingBudget);
   const sunset = useGame(s => s.sunsetProduct);
   const assign = useGame(s => s.assignEngineer);
   const unassign = useGame(s => s.unassignEngineer);
@@ -51,6 +52,17 @@ export default function ProductsPage() {
                   value={p.devBudget} onChange={(e) => setBudget(p.id, parseInt(e.target.value))}
                   style={{ width: "100%", marginTop: 4 }}
                 />
+                {["launched", "mature", "declining"].includes(p.stage) && (
+                  <>
+                    <label style={{ display: "block", marginTop: 10, fontSize: 11, color: "var(--color-ink-2)", fontWeight: 600, letterSpacing: ".06em", textTransform: "uppercase" }}>
+                      Marketing: {money(p.marketingBudget ?? 0, { short: true })}/wk
+                    </label>
+                    <input type="range" min={0} max={20000} step={250}
+                      value={p.marketingBudget ?? 0} onChange={(e) => setMarketing(p.id, parseInt(e.target.value))}
+                      style={{ width: "100%", marginTop: 4 }}
+                    />
+                  </>
+                )}
               </>
             )}
             <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-ink-2)" }}>Engineers:</div>

@@ -93,6 +93,7 @@ export function newGame(config: NewGameConfig): GameState {
     pricePerUser: defaultPrice(config.startingCategory),
     devProgress: 0,
     devBudget: 0,
+    marketingBudget: 0,
     weeksAtStage: 0,
     weeksSinceLaunch: 0,
     ageWeeks: 0,

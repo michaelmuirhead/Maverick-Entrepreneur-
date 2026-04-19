@@ -41,6 +41,7 @@ export interface Product {
   pricePerUser: number;        // $/mo per user
   devProgress: number;         // 0..100 during `dev` stage
   devBudget: number;           // $/week spent on this product's dev team
+  marketingBudget: number;     // $/week spent on ads/content/brand — only matters post-launch
   weeksAtStage: number;
   weeksSinceLaunch: number;
   ageWeeks: number;            // total age since concept

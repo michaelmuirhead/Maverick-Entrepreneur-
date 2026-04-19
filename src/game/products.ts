@@ -1,13 +1,26 @@
 import { GameEvent, Product, ProductCategory, ProductStage } from "./types";
 import { RNG } from "./rng";
 
-/** Weekly cost to keep a product alive (hosting, support, upkeep). */
+/** Weekly cost to keep a product alive (hosting, support, upkeep, marketing). */
 export function maintenanceCost(p: Product): number {
   if (p.stage === "concept" || p.stage === "eol") return 0;
-  const base = p.stage === "dev" ? p.devBudget : 0;
+  const dev = p.stage === "dev" ? p.devBudget : 0;
+  // Marketing only burns once a product is live. On concept/dev we ignore it (there's nothing to market).
+  const marketing = ["launched", "mature", "declining"].includes(p.stage) ? (p.marketingBudget ?? 0) : 0;
   const users = Math.max(0, p.users);
-  // Rough: $0.10/user/week hosting + $500 base + dev budget
-  return base + 500 + users * 0.1;
+  // Rough: $0.10/user/week hosting + $500 base + dev budget + marketing
+  return dev + marketing + 500 + users * 0.1;
+}
+
+/**
+ * Marketing efficiency — how much a $/week spend translates into signup multiplier.
+ * Diminishing returns: first $1k is gold, $20k is mostly vanity. Caps at ~2.0x.
+ */
+export function marketingMultiplier(p: Product): number {
+  const spend = Math.max(0, p.marketingBudget ?? 0);
+  if (spend <= 0) return 1;
+  // Logarithmic scaling: $0 -> 1.0, $1k -> ~1.25, $5k -> ~1.6, $20k -> ~1.95
+  return 1 + Math.min(1, Math.log10(1 + spend / 500) / 1.7);
 }
 
 /** Weekly revenue = users * price/mo / 4.3 (converts monthly to weekly). */
@@ -27,7 +40,7 @@ export function agingDecay(p: Product, rng: RNG): number {
   return Math.max(0, base + jitter);
 }
 
-/** Signups per week when launched. Depends on health, category demand, buzz, competitors. */
+/** Signups per week when launched. Depends on health, category demand, buzz, competitors, marketing spend. */
 export function signupsThisWeek(
   p: Product,
   opts: { marketDemand: number; competitorPressure: number; rng: RNG },
@@ -38,8 +51,9 @@ export function signupsThisWeek(
   const buzzBoost = Math.max(0, (p.launchBuzz ?? 0) - 50) / 50 * Math.exp(-p.weeksSinceLaunch / 8);
   const base = 8 + healthFactor * 40 + buzzBoost * 30;
   const pressure = 1 - Math.min(0.8, opts.competitorPressure);
+  const marketing = marketingMultiplier(p);
   const churnInjection = opts.rng.range(0.85, 1.2);
-  return Math.max(0, Math.round(base * opts.marketDemand * pressure * churnInjection));
+  return Math.max(0, Math.round(base * opts.marketDemand * pressure * marketing * churnInjection));
 }
 
 /** Weekly churn rate as a fraction of current users. */

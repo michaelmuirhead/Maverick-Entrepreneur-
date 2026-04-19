@@ -44,6 +44,26 @@ export function advanceWeek(state: GameState): GameState {
     const churn = Math.floor(np.users * churnRate(np));
     np.users = Math.max(0, np.users + signups - churn);
 
+    // Marketing flavor: big spend + big conversion = a headline. Big spend + weak conversion = a lesson.
+    if ((np.marketingBudget ?? 0) >= 3000 && ["launched", "mature"].includes(np.stage)) {
+      const costPerSignup = signups > 0 ? np.marketingBudget / signups : Infinity;
+      if (signups > 25 && costPerSignup < 120 && rng.chance(0.35)) {
+        events.push({
+          id: `ev_${nextWeek}_mkt_hit_${np.id}`,
+          week: nextWeek, severity: "good",
+          message: `${np.name}'s campaign is converting — ${signups} signups this week at about $${Math.round(costPerSignup)} CAC. The CFO almost smiled.`,
+          relatedProductId: np.id,
+        });
+      } else if (costPerSignup > 400 && rng.chance(0.25)) {
+        events.push({
+          id: `ev_${nextWeek}_mkt_miss_${np.id}`,
+          week: nextWeek, severity: "warn",
+          message: `${np.name}'s ad spend isn't landing. CAC is hovering around $${Math.round(Math.min(9999, costPerSignup))}. Worth a creative refresh — or a budget cut.`,
+          relatedProductId: np.id,
+        });
+      }
+    }
+
     // Health decay
     const decay = agingDecay(np, rng);
     np.health = Math.max(0, np.health - decay);
