@@ -81,8 +81,8 @@ describe("maintenanceCost + marketing", () => {
 
   it("ignores marketing on dev-stage products (pre-launch)", () => {
     const p = liveProduct({ stage: "dev", marketingBudget: 5_000, devBudget: 2_000, users: 0 });
-    // dev maintenance = devBudget + dev-stage base 200 + users*0.1; marketing should NOT count
-    expect(maintenanceCost(p)).toBe(2_000 + 200);
+    // dev maintenance = devBudget + dev-stage base 100 + users*0.1; marketing should NOT count
+    expect(maintenanceCost(p)).toBe(2_000 + 100);
   });
 });
 

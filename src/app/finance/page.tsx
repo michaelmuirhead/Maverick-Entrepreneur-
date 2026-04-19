@@ -74,18 +74,26 @@ export default function FinancePage() {
             <button
               onClick={() => setLastPitch({ week: state.week, outcome: pitch() })}
               className="themed-pill"
+              disabled={freshPitch?.kind === "passed"}
               style={{
-                background: "var(--color-accent)", color: "#fff",
+                background: freshPitch?.kind === "passed" ? "var(--color-muted)" : "var(--color-accent)",
+                color: "#fff",
                 padding: "10px 14px", fontSize: 14,
+                opacity: freshPitch?.kind === "passed" ? 0.65 : 1,
+                cursor: freshPitch?.kind === "passed" ? "not-allowed" : "pointer",
               }}
             >
-              {state.company.stage === "pre-seed" ? "Pitch investors for Seed"
+              {freshPitch?.kind === "passed"
+                ? "Pitched this week — try again next week"
+                : state.company.stage === "pre-seed" ? "Pitch investors for Seed"
                 : state.company.stage === "seed" ? "Pitch investors for Series A"
                 : "Pitch investors for Series B"}
             </button>
-            <p style={{ marginTop: 8, fontSize: 12, color: "var(--color-ink-2)", lineHeight: 1.4 }}>
-              Active pitch — investors will give you specific feedback either way. No more waiting on random phone calls.
-            </p>
+            {freshPitch?.kind !== "passed" && (
+              <p style={{ marginTop: 8, fontSize: 12, color: "var(--color-ink-2)", lineHeight: 1.4 }}>
+                Active pitch — investors will give you specific feedback either way.
+              </p>
+            )}
           </div>
         )}
 
@@ -94,18 +102,37 @@ export default function FinancePage() {
           <div
             style={{
               marginTop: 12,
-              padding: "10px 12px",
-              border: "var(--border-card)",
+              padding: "12px 14px",
+              border: "2px solid var(--color-warn)",
               borderRadius: "var(--radius-card)",
               background: "var(--color-surface-2)",
             }}
           >
-            <div style={{ fontWeight: 700, fontSize: 13, color: "var(--color-warn)" }}>
-              Investors passed on {freshPitch.nextRound}
+            <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: 13, color: "var(--color-warn)" }}>
+                Investors passed on {freshPitch.nextRound}
+              </div>
+              <span className="mono" style={{ fontSize: 10, color: "var(--color-ink-2)" }}>
+                wk {state.week}
+              </span>
             </div>
-            <ul style={{ margin: "6px 0 0 0", paddingLeft: 18, fontSize: 12, color: "var(--color-ink-2)", lineHeight: 1.5 }}>
+            <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 6, textTransform: "uppercase", letterSpacing: ".06em", fontWeight: 600 }}>
+              Why they passed
+            </div>
+            <ul style={{ margin: "4px 0 0 0", paddingLeft: 18, fontSize: 12, color: "var(--color-ink)", lineHeight: 1.5 }}>
               {freshPitch.reasons.map((r, i) => (<li key={i}>{r}</li>))}
             </ul>
+            {freshPitch.diagnostics?.required != null && (
+              <div className="mono" style={{
+                marginTop: 10, paddingTop: 8,
+                borderTop: "1px dashed var(--color-line)",
+                fontSize: 11, color: "var(--color-ink-2)",
+                display: "flex", justifyContent: "space-between",
+              }}>
+                <span>You: {money(freshPitch.diagnostics.mrr)} MRR</span>
+                <span>Bar: {money(freshPitch.diagnostics.required)} MRR</span>
+              </div>
+            )}
           </div>
         )}
       </div>

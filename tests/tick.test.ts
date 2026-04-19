@@ -28,7 +28,7 @@ describe("newGame / init", () => {
     expect(s.week).toBe(0);
     expect(s.year).toBe(1);
     expect(s.quarter).toBe(1);
-    expect(s.finance.cash).toBe(55_000);
+    expect(s.finance.cash).toBe(90_000);
     expect(s.products).toHaveLength(1);
     expect(s.products[0].stage).toBe("concept");
     expect(s.employees).toHaveLength(2); // founder + cofounder

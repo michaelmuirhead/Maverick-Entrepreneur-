@@ -154,26 +154,38 @@ function NoticeRow({
   isFirst: boolean; _hasMore: boolean;
 }) {
   const weeksLeft = Math.max(0, (e.noticeEndsWeek ?? week) - week);
-  const reasonLabel = e.noticeReason === "poached" ? "Rival made a competing offer"
-                    : e.noticeReason === "offer"   ? "Got an outside offer"
-                    :                                 "Resigned";
+  const reasonLabel = e.noticeReason === "poached" ? "Poached by a rival"
+                    : e.noticeReason === "offer"   ? "Outside offer on the table"
+                    :                                 "Resigning";
   const counterCost = counterOfferCost(e);
   const bonusCost = retentionBonusCost(e);
   const canCounter = cash >= counterCost;
   const canBonus = cash >= bonusCost;
+  const urgent = weeksLeft <= 1;
   return (
     <div style={{
       padding: "12px 14px",
       borderTop: isFirst ? 0 : "2px dashed var(--color-line)",
-      display: "grid", gap: 8,
+      display: "grid", gap: 10,
     }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
         <div>
-          <div style={{ fontWeight: 700, fontSize: 14 }}>{e.name}</div>
-          <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>
-            {ROLE_LABELS[e.role]} L{e.level} · {reasonLabel} · {weeksLeft}w left
+          <div style={{ fontWeight: 700, fontSize: 14 }}>
+            {e.name}
+            <span className="mono" style={{ marginLeft: 6, fontSize: 10, color: "var(--color-ink-2)", fontWeight: 600 }}>
+              {ROLE_LABELS[e.role]} L{e.level}
+            </span>
+          </div>
+          <div style={{ fontSize: 12, color: "var(--color-ink-2)", marginTop: 3, lineHeight: 1.3 }}>
+            {reasonLabel}
           </div>
         </div>
+        <span className="themed-pill" style={{
+          background: urgent ? "var(--color-bad)" : "var(--color-warn)",
+          color: "#fff", fontSize: 11, fontWeight: 700, padding: "4px 8px",
+        }}>
+          {weeksLeft === 0 ? "leaves this week" : `${weeksLeft}w left`}
+        </span>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
         <button
@@ -186,8 +198,14 @@ function NoticeRow({
             padding: "8px 10px", fontSize: 12, fontWeight: 700,
             opacity: canCounter ? 1 : 0.6,
             cursor: canCounter ? "pointer" : "not-allowed",
+            textAlign: "center",
           }}
-        >Counter (+{money(counterCost, { short: true })}/yr)</button>
+        >
+          <div>Counter offer</div>
+          <div className="mono" style={{ fontSize: 10, opacity: 0.85, marginTop: 1, fontWeight: 600 }}>
+            +{money(counterCost, { short: true })}/yr
+          </div>
+        </button>
         <button
           onClick={onBonus}
           disabled={!canBonus}
@@ -198,11 +216,17 @@ function NoticeRow({
             padding: "8px 10px", fontSize: 12, fontWeight: 700,
             opacity: canBonus ? 1 : 0.6,
             cursor: canBonus ? "pointer" : "not-allowed",
+            textAlign: "center",
           }}
-        >Bonus ({money(bonusCost, { short: true })})</button>
+        >
+          <div>Retention bonus</div>
+          <div className="mono" style={{ fontSize: 10, opacity: 0.85, marginTop: 1, fontWeight: 600 }}>
+            {money(bonusCost, { short: true })} one-time
+          </div>
+        </button>
       </div>
       <button onClick={onAccept} style={{ fontSize: 11, color: "var(--color-bad)", textDecoration: "underline", textAlign: "left" }}>
-        Accept their resignation now
+        Let them walk now
       </button>
     </div>
   );

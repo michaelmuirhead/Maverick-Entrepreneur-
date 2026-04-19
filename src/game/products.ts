@@ -10,9 +10,9 @@ export function maintenanceCost(p: Product): number {
   // vNext dev burn runs alongside live-product maintenance until it ships.
   const vNextDev = p.nextVersion ? Math.max(0, p.nextVersion.devBudget) : 0;
   const users = Math.max(0, p.users);
-  // Base overhead: a product in dev has almost no hosting/support cost, so charge $200/wk
-  // (tools, CI, staging). Once live, hosting + support + on-call bumps that to $500/wk.
-  const base = p.stage === "dev" ? 200 : 500;
+  // Base overhead: a product in dev has almost no hosting/support cost, so charge $100/wk
+  // (scrappy founders use free tiers). Once live, hosting + support + on-call bumps that to $500/wk.
+  const base = p.stage === "dev" ? 100 : 500;
   // Per-user hosting stays flat at $0.10/wk across live stages.
   return dev + marketing + vNextDev + base + users * 0.1;
 }
@@ -167,7 +167,7 @@ export function advanceProductStage(p: Product, events: GameEvent[], week: numbe
     case "dev": {
       // devProgress gained per week depends on budget & engineers
       const engineersOnIt = np.assignedEngineers.length;
-      const progressGain = Math.min(12, 3 + engineersOnIt * 2 + np.devBudget / 2000);
+      const progressGain = Math.min(12, 4 + engineersOnIt * 2 + np.devBudget / 1800);
       np.devProgress = Math.min(100, np.devProgress + progressGain);
       if (np.devProgress >= 100) {
         // Ship! Quality reflects dev time — rushed products start weaker.

@@ -7,7 +7,9 @@ export function pressureOn(category: ProductCategory, competitors: Competitor[])
   const inCat = competitors.filter(c => c.category === category);
   if (inCat.length === 0) return 0;
   const totalStrength = inCat.reduce((s, c) => s + (c.strength * (0.4 + c.marketShare)), 0);
-  return Math.min(0.95, totalStrength / 250);
+  // Balance: rivals can compress signup flow, but never strangle it. 0.75 ceiling
+  // leaves the player at least 25% of baseline signups even in a crowded market.
+  return Math.min(0.75, totalStrength / 400);
 }
 
 /** Default personality + stats for legacy competitors (from old saves without these fields). */

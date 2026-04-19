@@ -44,9 +44,25 @@ export default function ProductsPage() {
 
       <h2 className="sec-head" style={{ marginTop: 18 }}>Assignments</h2>
       <div className="themed-card" style={{ padding: 14 }}>
-        {state.products.filter(p => p.stage !== "eol").map(p => (
-          <div key={p.id} style={{ marginBottom: 14 }}>
-            <div style={{ fontWeight: 700, marginBottom: 6 }}>{p.name} <span className="mono" style={{ color: "var(--color-ink-2)", fontSize: 11, fontWeight: 600 }}>· {p.stage}</span></div>
+        {state.products.filter(p => p.stage !== "eol").map((p, idx, arr) => (
+          <div key={p.id} style={{
+            paddingTop: idx === 0 ? 0 : 14,
+            marginTop: idx === 0 ? 0 : 14,
+            borderTop: idx === 0 ? 0 : "2px dashed var(--color-line)",
+          }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+              <div style={{ fontWeight: 700 }}>
+                {p.name}{" "}
+                <span className="mono" style={{ color: "var(--color-ink-2)", fontSize: 11, fontWeight: 600 }}>
+                  v{p.version} · {p.stage}
+                </span>
+              </div>
+              {["launched", "mature", "declining"].includes(p.stage) && (
+                <span className="mono" style={{ fontSize: 10, color: "var(--color-ink-2)" }}>
+                  health {Math.round(p.health)} · quality {Math.round(p.quality)}
+                </span>
+              )}
+            </div>
             {p.stage !== "eol" && (
               <>
                 <label style={{ fontSize: 11, color: "var(--color-ink-2)", fontWeight: 600, letterSpacing: ".06em", textTransform: "uppercase" }}>
@@ -88,7 +104,7 @@ export default function ProductsPage() {
                   );
                 })}
             </div>
-            {p.nextVersion ? (
+            {p.nextVersion && (
               <div style={{
                 marginTop: 10,
                 padding: "10px 12px",
@@ -98,7 +114,7 @@ export default function ProductsPage() {
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <div style={{ fontWeight: 700, fontSize: 13 }}>
-                    {p.name} {p.nextVersion.targetVersion} in dev
+                    Building {p.nextVersion.targetVersion}
                   </div>
                   <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)" }}>
                     {Math.round(p.nextVersion.progress)}% · {money(p.nextVersion.devBudget, { short: true })}/wk
@@ -114,28 +130,33 @@ export default function ProductsPage() {
                     background: "var(--color-accent)",
                   }} />
                 </div>
-                <button onClick={() => cancelVNext(p.id)} style={{
-                  marginTop: 8, fontSize: 11, color: "var(--color-bad)", textDecoration: "underline",
-                }}>Cancel {p.nextVersion.targetVersion} build</button>
               </div>
-            ) : canStartNextVersion(p) && (
-              <button
-                onClick={() => setVNextTarget(p)}
-                className="themed-pill"
-                style={{
-                  marginTop: 10, background: "var(--color-good)", color: "#fff",
-                  padding: "6px 10px", fontSize: 12, fontWeight: 700,
-                }}
-              >
-                Start v{majorVersion(p.version) + 1}
-              </button>
             )}
-            {p.stage !== "eol" && p.stage !== "concept" && (
-              <button onClick={() => sunset(p.id)} style={{
-                marginTop: 8, marginLeft: p.nextVersion || canStartNextVersion(p) ? 10 : 0,
-                fontSize: 11, color: "var(--color-bad)", textDecoration: "underline",
-              }}>Sunset this product</button>
-            )}
+            <div style={{ display: "flex", gap: 14, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
+              {!p.nextVersion && canStartNextVersion(p) && (
+                <button
+                  onClick={() => setVNextTarget(p)}
+                  className="themed-pill"
+                  style={{
+                    background: p.health < 55 ? "var(--color-warn)" : "var(--color-good)",
+                    color: "#fff", padding: "6px 12px", fontSize: 12, fontWeight: 700,
+                  }}
+                >
+                  Start v{majorVersion(p.version) + 1}
+                  {p.health < 55 && " — aging"}
+                </button>
+              )}
+              {p.nextVersion && (
+                <button onClick={() => cancelVNext(p.id)} style={{
+                  fontSize: 11, color: "var(--color-bad)", textDecoration: "underline",
+                }}>Cancel {p.nextVersion.targetVersion} build</button>
+              )}
+              {p.stage !== "eol" && p.stage !== "concept" && (
+                <button onClick={() => sunset(p.id)} style={{
+                  fontSize: 11, color: "var(--color-bad)", textDecoration: "underline",
+                }}>Sunset this product</button>
+              )}
+            </div>
           </div>
         ))}
       </div>
