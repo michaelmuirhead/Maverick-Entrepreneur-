@@ -1,0 +1,72 @@
+import type { Industry } from "@/types";
+
+export const INDUSTRIES: Record<string, Industry> = {
+  coffee: {
+    id: "coffee",
+    name: "Coffee Company",
+    tagline: "Traffic. Consistency. Location, location, location.",
+    startingCost: 18000,
+    baseMonthlyRevenue: 9500,
+    baseMonthlyCost: 6800,
+    volatility: 0.15,
+    growthCeiling: 2.2,
+    flavor: "A corner shop, a morning ritual, a brand that travels.",
+  },
+  ecommerce: {
+    id: "ecommerce",
+    name: "E-Commerce Company",
+    tagline: "Catalog, logistics, margin — and ad spend.",
+    startingCost: 14000,
+    baseMonthlyRevenue: 8200,
+    baseMonthlyCost: 5700,
+    volatility: 0.28,
+    growthCeiling: 3.0,
+    flavor: "Ship faster, convert better, fight for the feed.",
+  },
+  software: {
+    id: "software",
+    name: "Software Company",
+    tagline: "Talent. Subscriptions. Velocity.",
+    startingCost: 25000,
+    baseMonthlyRevenue: 11000,
+    baseMonthlyCost: 8200,
+    volatility: 0.35,
+    growthCeiling: 4.5,
+    flavor: "A quiet edit in a repo can change everything.",
+  },
+  fastfood: {
+    id: "fastfood",
+    name: "Fast Food Company",
+    tagline: "Throughput, unit economics, franchisee morale.",
+    startingCost: 32000,
+    baseMonthlyRevenue: 14500,
+    baseMonthlyCost: 10900,
+    volatility: 0.18,
+    growthCeiling: 2.8,
+    flavor: "A counter, a drive-thru, a national footprint.",
+  },
+  construction: {
+    id: "construction",
+    name: "Construction Company",
+    tagline: "Contracts. Timing. The cycle.",
+    startingCost: 22000,
+    baseMonthlyRevenue: 16000,
+    baseMonthlyCost: 12600,
+    volatility: 0.42,
+    growthCeiling: 2.4,
+    flavor: "Boom years carry you. Bust years test you.",
+  },
+  law: {
+    id: "law",
+    name: "Law Firm",
+    tagline: "Reputation. Hourly rates. The long memory of the bar.",
+    startingCost: 30000,
+    baseMonthlyRevenue: 12800,
+    baseMonthlyCost: 8400,
+    volatility: 0.12,        // lowest in the game — law is recession-resistant
+    growthCeiling: 3.2,
+    flavor: "Your name on the letterhead is your entire product.",
+  },
+};
+
+export const INDUSTRY_LIST = Object.values(INDUSTRIES);
