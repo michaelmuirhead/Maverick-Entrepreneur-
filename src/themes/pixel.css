@@ -1,0 +1,45 @@
+/* Theme: Pixel + Dashboard (alternate).
+   Dark terminal, Press Start 2P headers, VT323 body, pixel sprites. */
+
+[data-theme="pixel"] {
+  /* Typography */
+  --font-sans: "VT323", ui-monospace, Menlo, monospace;
+  --font-mono: "SF Mono", "JetBrains Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-display: "Press Start 2P", "VT323", ui-monospace, monospace;
+
+  /* Surfaces */
+  --color-bg: #0B0F12;
+  --color-surface: #121A20;
+  --color-surface-2: #172128;
+
+  /* Ink */
+  --color-ink: #E6EDF3;
+  --color-ink-2: #9AA7B2;
+  --color-muted: #5F6E7A;
+  --color-line: #1E2A33;
+
+  /* Accents */
+  --color-accent: #FFB020;
+  --color-accent-2: #22D3EE;
+  --color-good: #2BD97C;
+  --color-warn: #FFB020;
+  --color-bad: #FF5252;
+  --color-blue: #22D3EE;
+  --color-purple: #A78BFA;
+  --color-pink: #FF6FB5;
+  --color-soft: #1E2A33;
+
+  /* Shape */
+  --radius-card: 0px;
+  --shadow-card: none;
+  --border-card: 1px solid var(--color-line);
+
+  /* Sky (unused in pixel theme but keep the var so components don't crash) */
+  --color-sky-1: #0F1A22;
+  --color-sky-2: #0B0F12;
+}
+
+/* Pixel theme: disable border-radius on cards for sharp terminal edges */
+[data-theme="pixel"] .themed-card { border-radius: 0 !important; }
+[data-theme="pixel"] body { font-size: 18px; line-height: 1.2; }
+[data-theme="pixel"] img, [data-theme="pixel"] svg { image-rendering: pixelated; }

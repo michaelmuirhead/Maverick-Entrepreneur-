@@ -1,0 +1,40 @@
+/* Theme: Cartoonish + Dashboard (default).
+   Warm paper + thick outlines, chunky drop shadows, IBM Plex Mono for numbers. */
+
+[data-theme="cartoonish"] {
+  /* Typography */
+  --font-sans: "Fredoka", system-ui, -apple-system, "SF Pro Text", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-display: "Fredoka", system-ui, sans-serif;
+
+  /* Surfaces */
+  --color-bg: #FFF7EC;
+  --color-surface: #FFFDF7;
+  --color-surface-2: #FFF1D8;
+
+  /* Ink */
+  --color-ink: #2C1B47;
+  --color-ink-2: #5A4A7A;
+  --color-muted: #8A7BAA;
+  --color-line: #2C1B47;
+
+  /* Accents */
+  --color-accent: #FF7A59;
+  --color-accent-2: #FFB340;
+  --color-good: #2FB56A;
+  --color-warn: #FFB340;
+  --color-bad: #E04646;
+  --color-blue: #4E8CFF;
+  --color-purple: #9F6BE3;
+  --color-pink: #FF6FB5;
+  --color-soft: #EADFFB;
+
+  /* Shape */
+  --radius-card: 16px;
+  --shadow-card: 0 4px 0 var(--color-line);
+  --border-card: 3px solid var(--color-line);
+
+  /* Sky illustration (HQ scene) */
+  --color-sky-1: #B8E6FF;
+  --color-sky-2: #D6F0FF;
+}

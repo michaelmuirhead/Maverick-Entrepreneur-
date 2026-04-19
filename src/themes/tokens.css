@@ -1,0 +1,41 @@
+/* Base tokens: shared across all themes. Per-theme tokens override in cartoonish.css / pixel.css. */
+
+:root {
+  /* Layout */
+  --radius-card: 16px;
+  --radius-chip: 999px;
+  --stack-xs: 4px;
+  --stack-sm: 8px;
+  --stack-md: 12px;
+  --stack-lg: 16px;
+  --stack-xl: 24px;
+
+  /* Motion */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --dur-fast: 120ms;
+  --dur-base: 220ms;
+
+  /* Safe areas for iPhone notch / home indicator */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+/* CSS reset-lite */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  min-height: 100vh;
+  overscroll-behavior-y: none;
+}
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+a { color: inherit; text-decoration: none; }
+input, select, textarea { font: inherit; color: inherit; }
+
+/* Monospace utility for numbers */
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.num { font-variant-numeric: tabular-nums; }
