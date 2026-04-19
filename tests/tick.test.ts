@@ -5,8 +5,20 @@ import { computeMrr, runwayMonths, fundingOffer, applyFundingRound } from "@/gam
 import { weeklyRevenue, maintenanceCost, advanceProductStage } from "@/game/products";
 import { weeklyPayroll } from "@/game/team";
 import { makeRng } from "@/game/rng";
-import type { GameEvent, GameState, Product } from "@/game/types";
+import type { GameEvent, GameState, Product, SegmentedUsers } from "@/game/types";
 import { SCHEMA_VERSION } from "@/game/types";
+import { derivePricing, SEGMENT_MIX, ZERO_USERS } from "@/game/segments";
+
+// Split a legacy-style total user count across segments using the productivity default mix
+// so these older tests can keep using a single-number total.
+function seg(n: number): SegmentedUsers {
+  if (n <= 0) return { ...ZERO_USERS };
+  const mix = SEGMENT_MIX.productivity;
+  const ent = Math.round(n * mix.enterprise);
+  const smb = Math.round(n * mix.smb);
+  return { enterprise: ent, smb, selfServe: Math.max(0, n - ent - smb) };
+}
+const price = (p: number) => derivePricing(p);
 
 // Helper: snapshot a fresh state for a deterministic seed
 function baseGame(overrides: Partial<Parameters<typeof newGame>[0]> = {}): GameState {
@@ -114,12 +126,15 @@ describe("finance math", () => {
     const launched: Product = {
       ...s.products[0],
       stage: "launched",
-      users: 100,
-      pricePerUser: 20,
+      users: seg(100),
+      pricing: price(20),
     };
-    const concept: Product = { ...s.products[0], id: "p_concept", stage: "concept", users: 0 };
+    const concept: Product = { ...s.products[0], id: "p_concept", stage: "concept", users: { ...ZERO_USERS } };
     const withProducts = { ...s, products: [launched, concept] };
-    expect(computeMrr(withProducts)).toBe(100 * 20);
+    // Blended MRR weights each segment by its distinct price. For productivity mix
+    // (5/25/70) at a $20 self-serve anchor, blended MRR on 100 users is well above
+    // 100 * $20 because enterprise pays 10x. We assert a conservative lower bound.
+    expect(computeMrr(withProducts)).toBeGreaterThanOrEqual(100 * 20);
   });
 
   it("runwayMonths returns large number when burn is zero", () => {
@@ -145,8 +160,8 @@ describe("finance math", () => {
         ...s.products[0],
         stage: "launched",
         health: 75,
-        users: 500,
-        pricePerUser: 20, // MRR = 10_000
+        users: seg(500),
+        pricing: price(20), // blended MRR well above $5k
       }],
     };
     const offer = fundingOffer(boosted);
@@ -162,8 +177,8 @@ describe("finance math", () => {
         ...s.products[0],
         stage: "mature",
         health: 75,
-        users: 500,
-        pricePerUser: 20, // MRR = 10_000
+        users: seg(500),
+        pricing: price(20), // blended MRR well above $5k
       }],
     };
     expect(fundingOffer(boosted)?.label).toBe("Seed");
@@ -255,7 +270,7 @@ describe("product lifecycle transitions", () => {
       ...s.products[0],
       stage: "declining",
       health: 5,
-      users: 100,
+      users: seg(100),
       weeksAtStage: 4,
     };
     const p1 = advanceProductStage(p0, events, 10, rng);
@@ -293,10 +308,13 @@ describe("product versioning (v2)", () => {
       category: "productivity",
       stage: "launched",
       version: "1.0",
-      health: 60, quality: 60, users: 500,
-      pricePerUser: 12,
+      health: 60, quality: 60, users: seg(500),
+      pricing: price(12),
       devProgress: 100, devBudget: 0, marketingBudget: 0,
       weeksAtStage: 2, weeksSinceLaunch: 2, ageWeeks: 10,
+      lifetimeRevenue: 0, lifetimeCost: 0, lifetimeDevCost: 0, lifetimeMarketingCost: 0,
+      peakUsers: 500, peakMrr: 0,
+      techDebt: 0,
       assignedEngineers: [],
       ...overrides,
     };

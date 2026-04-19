@@ -2,6 +2,8 @@
 import { Product } from "@/game/types";
 import { useGame } from "@/game/store";
 import { money } from "@/lib/format";
+import { blendedMrr, totalUsers } from "@/game/segments";
+import { debtLabel } from "@/game/debt";
 
 const CATEGORY_GLYPH: Record<Product["category"], string> = {
   productivity: "📝",
@@ -34,7 +36,8 @@ export function ProductList({ limit }: { limit?: number }) {
     <div className="themed-card">
       {visible.map((p, i) => {
         const meta = STAGE_LABEL[p.stage];
-        const mrr = (p.users * p.pricePerUser);
+        const mrr = blendedMrr(p);
+        const userCount = totalUsers(p);
         const healthPct = Math.max(4, Math.min(100, p.health));
         const healthColor = p.health > 60 ? "var(--color-good)" : p.health > 35 ? "var(--color-warn)" : "var(--color-bad)";
         return (
@@ -54,7 +57,7 @@ export function ProductList({ limit }: { limit?: number }) {
             <div>
               <div style={{ fontWeight: 700, fontSize: 15 }}>{p.name}</div>
               <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>
-                v{p.version} · {p.users.toLocaleString()} users · {money(mrr, { short: true })}/mo
+                v{p.version} · {userCount.toLocaleString()} users · {money(mrr, { short: true })}/mo · debt {Math.round(p.techDebt ?? 0)} ({debtLabel(p.techDebt ?? 0)})
               </div>
               {p.stage === "dev" ? (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>

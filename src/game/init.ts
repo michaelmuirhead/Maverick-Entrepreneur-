@@ -2,6 +2,7 @@ import {
   CompanyState, Competitor, Employee, GameState, Product, ProductCategory, SCHEMA_VERSION,
 } from "./types";
 import { makeIdGen, makeRng, RNG } from "./rng";
+import { ZERO_USERS, derivePricing } from "./segments";
 
 // Name pools for procedural generation
 const FIRST_NAMES = [
@@ -92,8 +93,8 @@ export function newGame(config: NewGameConfig): GameState {
     version: "0.1",
     health: 80,
     quality: 60,
-    users: 0,
-    pricePerUser: defaultPrice(config.startingCategory),
+    users: { ...ZERO_USERS },
+    pricing: derivePricing(defaultPrice(config.startingCategory)),
     devProgress: 0,
     devBudget: 0,
     marketingBudget: 0,
@@ -101,6 +102,13 @@ export function newGame(config: NewGameConfig): GameState {
     weeksSinceLaunch: 0,
     ageWeeks: 0,
     assignedEngineers: [cofounder.role === "engineer" ? cofounder.id : founder.id],
+    lifetimeRevenue: 0,
+    lifetimeCost: 0,
+    lifetimeDevCost: 0,
+    lifetimeMarketingCost: 0,
+    peakUsers: 0,
+    peakMrr: 0,
+    techDebt: 0,
   };
 
   // --- Competitors: 3 in your category, 2 adjacent ---
@@ -152,6 +160,7 @@ export function newGame(config: NewGameConfig): GameState {
         : [],
     },
     products: [firstProduct],
+    archivedProducts: [],
     employees: [founder, cofounder],
     competitors,
     trends: [],

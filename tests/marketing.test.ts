@@ -2,7 +2,16 @@ import { describe, it, expect } from "vitest";
 import { newGame } from "@/game/init";
 import { marketingMultiplier, maintenanceCost, signupsThisWeek } from "@/game/products";
 import { makeRng } from "@/game/rng";
-import type { GameState, Product } from "@/game/types";
+import type { GameState, Product, SegmentedUsers } from "@/game/types";
+import { derivePricing, SEGMENT_MIX, ZERO_USERS } from "@/game/segments";
+
+function seg(n: number): SegmentedUsers {
+  if (n <= 0) return { ...ZERO_USERS };
+  const mix = SEGMENT_MIX.productivity;
+  const ent = Math.round(n * mix.enterprise);
+  const smb = Math.round(n * mix.smb);
+  return { enterprise: ent, smb, selfServe: Math.max(0, n - ent - smb) };
+}
 
 function baseGame(): GameState {
   return newGame({
@@ -15,19 +24,28 @@ function baseGame(): GameState {
   });
 }
 
-function liveProduct(overrides: Partial<Product> = {}): Product {
+// Accept loose overrides so existing tests can still pass `users: 0` as a total.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LooseProductOverrides = Partial<Omit<Product, "users">> & { users?: number | SegmentedUsers };
+function liveProduct(overrides: LooseProductOverrides = {}): Product {
   const s = baseGame();
+  const userOv = overrides.users;
+  const users: SegmentedUsers = typeof userOv === "number" ? seg(userOv) : (userOv ?? seg(200));
+  const { users: _unused, ...rest } = overrides;
+  void _unused;
   return {
     ...s.products[0],
     stage: "launched",
-    users: 200,
-    pricePerUser: 20,
+    users,
+    pricing: derivePricing(20),
     health: 70,
     quality: 70,
     launchBuzz: 50,
     weeksSinceLaunch: 2,
     marketingBudget: 0,
-    ...overrides,
+    lifetimeRevenue: 0, lifetimeCost: 0, lifetimeDevCost: 0, lifetimeMarketingCost: 0,
+    peakUsers: 200, peakMrr: 0,
+    ...rest,
   };
 }
 

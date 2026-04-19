@@ -8,6 +8,10 @@ import { makeIdGen, makeRng } from "./rng";
 import { applyFundingRound, fundingOffer, pitchForFunding, PitchOutcome } from "./finance";
 import { counterOfferCost, retentionBonusCost, salaryFor } from "./team";
 import { startNextVersion, canStartNextVersion } from "./products";
+import { ZERO_USERS, derivePricing } from "./segments";
+import { buildArchiveEntry } from "./archive";
+import { isRefactorActive, refactorWeeklyCost } from "./debt";
+import { teamEffects } from "./roles";
 import { loadGame, saveGame } from "@/lib/storage";
 import { money } from "@/lib/format";
 
@@ -36,6 +40,11 @@ interface GameStore {
   startProductNextVersion: (id: string, weeklyBudget: number) => void;
   /** Cancel an in-flight vNext effort (budget was sunk, progress is lost). */
   cancelProductNextVersion: (id: string) => void;
+
+  /** Kick off a refactor sprint — burns tech debt fast at the cost of velocity + cash. */
+  startRefactorSprint: (id: string, weeks: number) => void;
+  /** Cut the sprint short. Debt paydown stops; velocity returns to normal next tick. */
+  cancelRefactorSprint: (id: string) => void;
 
   // Team actions
   hireCandidate: (candidate: Employee) => void;
@@ -118,7 +127,7 @@ export const useGame = create<GameStore>((set, get) => ({
   })),
 
   designNewProduct: (name, category, pricePerUser) => update(set, get, (s) => {
-    const rng = makeRng(`${s.seed}:p${s.products.length}`);
+    const rng = makeRng(`${s.seed}:p${s.products.length + s.archivedProducts.length}`);
     const newId = makeIdGen(rng);
     const finalName = name.trim() || suggestProductName(category, rng);
     const p: Product = {
@@ -129,8 +138,8 @@ export const useGame = create<GameStore>((set, get) => ({
       version: "0.1",
       health: 85,
       quality: 60,
-      users: 0,
-      pricePerUser,
+      users: { ...ZERO_USERS },
+      pricing: derivePricing(pricePerUser),
       devProgress: 0,
       devBudget: 0,
       marketingBudget: 0,
@@ -138,13 +147,38 @@ export const useGame = create<GameStore>((set, get) => ({
       weeksSinceLaunch: 0,
       ageWeeks: 0,
       assignedEngineers: [],
+      lifetimeRevenue: 0,
+      lifetimeCost: 0,
+      lifetimeDevCost: 0,
+      lifetimeMarketingCost: 0,
+      peakUsers: 0,
+      peakMrr: 0,
+      techDebt: 0,
     };
     return { ...s, products: [...s.products, p] };
   }),
 
-  sunsetProduct: (id) => update(set, get, (s) => ({
-    ...s, products: s.products.map(p => p.id === id ? { ...p, stage: "eol" as const, weeksAtStage: 0 } : p),
-  })),
+  sunsetProduct: (id) => update(set, get, (s) => {
+    const target = s.products.find(p => p.id === id);
+    if (!target) return s;
+    // Build a post-mortem and move the product off the active roster into the archive.
+    // Any employees assigned to it are released (unassigned, not fired).
+    const archived = buildArchiveEntry(target, s.week, "sunset");
+    return {
+      ...s,
+      products: s.products.filter(p => p.id !== id),
+      archivedProducts: [archived, ...s.archivedProducts],
+      employees: s.employees.map(e =>
+        e.assignedProductId === id ? { ...e, assignedProductId: undefined } : e,
+      ),
+      events: [
+        { id: `ev_${s.week}_sunset_${id}`, week: s.week, severity: "warn",
+          message: `Sunset ${target.name}. Lifetime revenue: ${money(archived.lifetimeRevenue, { short: true })} against ${money(archived.lifetimeCost, { short: true })} spent. Verdict: ${archived.verdict}.`,
+          relatedProductId: id },
+        ...s.events,
+      ],
+    };
+  }),
 
   startProductNextVersion: (id, weeklyBudget) => update(set, get, (s) => {
     const target = s.products.find(p => p.id === id);
@@ -172,6 +206,41 @@ export const useGame = create<GameStore>((set, get) => ({
       events: [
         { id: `ev_${s.week}_vcancel_${id}`, week: s.week, severity: "warn",
           message: `Cancelled ${target.name} ${target.nextVersion.targetVersion}. Progress lost, lessons learned — supposedly.` },
+        ...s.events,
+      ],
+    };
+  }),
+
+  startRefactorSprint: (id, weeks) => update(set, get, (s) => {
+    const target = s.products.find(p => p.id === id);
+    if (!target) return s;
+    // Only makes sense on products that exist as a codebase — dev or post-launch.
+    if (!["dev", "launched", "mature", "declining"].includes(target.stage)) return s;
+    if (isRefactorActive(target, s.week)) return s;
+    const weeksClamped = Math.max(1, Math.min(12, Math.round(weeks)));
+    const until = s.week + weeksClamped;
+    return {
+      ...s,
+      products: s.products.map(p => p.id === id ? { ...p, refactorSprintUntil: until } : p),
+      events: [
+        { id: `ev_${s.week}_refactor_${id}`, week: s.week, severity: "info",
+          message: `Refactor sprint on ${target.name} — ${weeksClamped} week${weeksClamped === 1 ? "" : "s"} of paying down debt. Velocity will be halved while it runs; expect about ${Math.round(refactorWeeklyCost(target, teamEffects(target.assignedEngineers, s.employees)) / 1000)}K/wk extra spend.`,
+          relatedProductId: id },
+        ...s.events,
+      ],
+    };
+  }),
+
+  cancelRefactorSprint: (id) => update(set, get, (s) => {
+    const target = s.products.find(p => p.id === id);
+    if (!target || !isRefactorActive(target, s.week)) return s;
+    return {
+      ...s,
+      products: s.products.map(p => p.id === id ? { ...p, refactorSprintUntil: undefined } : p),
+      events: [
+        { id: `ev_${s.week}_refactor_cancel_${id}`, week: s.week, severity: "warn",
+          message: `Cut the refactor sprint on ${target.name} short. The debt that remains is still there, just less in your face.`,
+          relatedProductId: id },
         ...s.events,
       ],
     };

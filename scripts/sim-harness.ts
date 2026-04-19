@@ -196,7 +196,7 @@ function runOnce(strategy: Strategy, difficulty: Difficulty, seed: string): RunR
         peakCash, peakMrr,
         endCash: state.finance.cash,
         endMrr: mrr,
-        endUsers: state.products.reduce((s, p) => s + p.users, 0),
+        endUsers: state.products.reduce((s, p) => s + p.users.enterprise + p.users.smb + p.users.selfServe, 0),
         productsShipped: state.products.filter(p => p.stage !== "concept" && p.stage !== "dev").length,
       };
     }
@@ -212,7 +212,7 @@ function runOnce(strategy: Strategy, difficulty: Difficulty, seed: string): RunR
     peakCash, peakMrr,
     endCash: state.finance.cash,
     endMrr: finalMrr,
-    endUsers: state.products.reduce((s, p) => s + p.users, 0),
+    endUsers: state.products.reduce((s, p) => s + p.users.enterprise + p.users.smb + p.users.selfServe, 0),
     productsShipped: state.products.filter(p => p.stage !== "concept" && p.stage !== "dev").length,
   };
 }

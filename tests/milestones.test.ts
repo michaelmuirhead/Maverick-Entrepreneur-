@@ -1,7 +1,16 @@
 import { describe, it, expect } from "vitest";
 import { newGame } from "@/game/init";
 import { nextMilestone } from "@/game/milestones";
-import type { GameState, Product } from "@/game/types";
+import type { GameState, Product, SegmentedUsers } from "@/game/types";
+import { derivePricing, SEGMENT_MIX, ZERO_USERS } from "@/game/segments";
+
+function seg(n: number): SegmentedUsers {
+  if (n <= 0) return { ...ZERO_USERS };
+  const mix = SEGMENT_MIX.productivity;
+  const ent = Math.round(n * mix.enterprise);
+  const smb = Math.round(n * mix.smb);
+  return { enterprise: ent, smb, selfServe: Math.max(0, n - ent - smb) };
+}
 
 function baseGame(): GameState {
   return newGame({
@@ -36,8 +45,8 @@ describe("nextMilestone", () => {
     const live: Product = {
       ...s.products[0],
       stage: "launched",
-      users: 30,
-      pricePerUser: 20, // MRR = 600
+      users: seg(30),
+      pricing: derivePricing(20), // blended MRR well below $5k — still progress target
     };
     const m = nextMilestone({ ...s, products: [live] });
     expect(m.kind).toBe("goal");
@@ -52,8 +61,8 @@ describe("nextMilestone", () => {
       ...s.products[0],
       stage: "launched",
       health: 75,
-      users: 500,
-      pricePerUser: 20, // MRR = 10_000
+      users: seg(500),
+      pricing: derivePricing(20),
     };
     const m = nextMilestone({ ...s, products: [live] });
     expect(m.kind).toBe("offer");
@@ -82,8 +91,8 @@ describe("nextMilestone", () => {
       ...s.products[0],
       stage: "mature",
       health: 80,
-      users: 50_000,
-      pricePerUser: 20,
+      users: seg(50_000),
+      pricing: derivePricing(20),
     };
     const scaled: GameState = {
       ...s,

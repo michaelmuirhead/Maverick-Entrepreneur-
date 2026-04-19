@@ -1,10 +1,11 @@
 import { FundingRound, GameEvent, GameState } from "./types";
+import { blendedMrr, totalUsers } from "./segments";
 
 /** Monthly recurring revenue from all live products. */
 export function computeMrr(state: GameState): number {
   return state.products.reduce((s, p) => {
     if (!["launched", "mature", "declining"].includes(p.stage)) return s;
-    return s + p.users * p.pricePerUser;
+    return s + blendedMrr(p);
   }, 0);
 }
 
@@ -28,7 +29,7 @@ export function fundingOffer(state: GameState): FundingOffer | null {
   // (mature) both count as real traction from an investor's view. Restricting to "launched"
   // alone made the Seed offer expire before MRR could ramp past the $5k gate.
   const hasGrowingProduct = state.products.some(
-    p => (p.stage === "launched" || p.stage === "mature") && p.health > 60 && p.users > 50,
+    p => (p.stage === "launched" || p.stage === "mature") && p.health > 60 && totalUsers(p) > 50,
   );
   const stage = state.company.stage;
 
@@ -79,7 +80,7 @@ export function pitchForFunding(state: GameState): PitchOutcome {
 
   // Growing-product gate (Seed only — later rounds don't require this gate)
   const hasGrowingProduct = state.products.some(
-    p => (p.stage === "launched" || p.stage === "mature") && p.health > 60 && p.users > 50,
+    p => (p.stage === "launched" || p.stage === "mature") && p.health > 60 && totalUsers(p) > 50,
   );
   if (target.label === "Seed" && !hasGrowingProduct) {
     reasons.push("Investors want a launched product with real health (>60) and at least 50 paying users. Ship something that's actually working first.");

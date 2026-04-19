@@ -56,6 +56,23 @@ export type ProductStage =
   | "declining"  // tech aging, losing share
   | "eol";       // sunset
 
+/** A customer segment. Products sell to multiple segments with different economics. */
+export type CustomerSegment = "enterprise" | "smb" | "selfServe";
+
+/** Paid user count split by segment. Total = enterprise + smb + selfServe. */
+export interface SegmentedUsers {
+  enterprise: number;
+  smb: number;
+  selfServe: number;
+}
+
+/** $/month per seat, quoted per segment. Enterprise deals command ~10x the self-serve price. */
+export interface SegmentedPricing {
+  enterprise: number;
+  smb: number;
+  selfServe: number;
+}
+
 export interface Product {
   id: ID;
   name: string;
@@ -64,8 +81,8 @@ export interface Product {
   version: string;             // e.g. "1.0", "2.1"
   health: number;              // 0..100 — tech freshness + product-market fit
   quality: number;             // 0..100 — how well-built it was at launch, decays slowly
-  users: number;               // paid + active users
-  pricePerUser: number;        // $/mo per user
+  users: SegmentedUsers;       // paid + active users, per segment
+  pricing: SegmentedPricing;   // $/mo per seat, per segment
   devProgress: number;         // 0..100 during `dev` stage
   devBudget: number;           // $/week spent on this product's dev team
   marketingBudget: number;     // $/week spent on ads/content/brand — only matters post-launch
@@ -75,6 +92,23 @@ export interface Product {
   assignedEngineers: ID[];     // employees currently on this product
   // Launch outcome memory (for narrative + UI)
   launchBuzz?: number;         // 0..100 hype at launch
+  launchedWeek?: number;       // week the product first hit "launched"
+
+  // Lifetime tallies — accumulated each tick so we can build an archive post-mortem.
+  lifetimeRevenue: number;     // $ earned across every week live
+  lifetimeCost: number;        // $ spent on dev + maintenance + marketing across entire life
+  lifetimeDevCost: number;     // $ spent specifically on dev (including vNext dev)
+  lifetimeMarketingCost: number; // $ spent on marketing across entire life
+  peakUsers: number;           // highest user count (any segment blend) ever
+  peakMrr: number;             // highest blended MRR ever
+
+  // Technical debt — 0 is a pristine codebase, 100 is "everything's on fire and nothing works."
+  // Accumulates during rushed dev, vNext sprints, and slow drift post-launch. Slows velocity,
+  // bumps churn, and eats product health above threshold. Paid down by refactor sprints,
+  // shipping a vNext, and having PMs / designers on the team.
+  techDebt: number;            // 0..100
+  /** Week the current refactor sprint ends. Undefined = no sprint. */
+  refactorSprintUntil?: number;
 
   // v2 / vN development — a next version being built on top of a launched product.
   // When ready, it bumps the major version, restores health, and boosts quality and users.
@@ -84,6 +118,36 @@ export interface Product {
     startedWeek: number;
     devBudget: number;         // $/week earmarked for the vN build
   };
+}
+
+/** Post-mortem snapshot written when a product is closed (sunset or naturally EOL'd). */
+export interface ArchivedProduct {
+  id: ID;
+  name: string;
+  category: ProductCategory;
+  finalVersion: string;
+  launchedWeek?: number;       // when it first went live (if it ever did)
+  archivedWeek: number;        // when it closed
+  ageWeeks: number;            // total life span
+
+  /** Why it closed. "sunset" = player pulled the plug. "decayed" = auto-EOL from health/user collapse. */
+  closedReason: "sunset" | "decayed" | "preLaunch";
+
+  // Stats
+  peakUsers: number;
+  peakMrr: number;
+  lifetimeRevenue: number;
+  lifetimeCost: number;
+  lifetimeDevCost: number;
+  lifetimeMarketingCost: number;
+
+  finalUsers: SegmentedUsers;
+  finalHealth: number;
+  finalQuality: number;
+
+  /** Human-readable one-liner the UI renders; "Hit / Solid / Meh / Flop" pill. */
+  verdict: "hit" | "solid" | "meh" | "flop" | "stillborn";
+  narrative: string;
 }
 
 export type EmployeeRole = "engineer" | "designer" | "pm" | "sales" | "marketing" | "ops" | "founder";
@@ -209,6 +273,8 @@ export interface GameState {
   finance: Finance;
 
   products: Product[];
+  /** Products that have been closed out. Rendered in a separate "Graveyard" / "Archive" view. */
+  archivedProducts: ArchivedProduct[];
   employees: Employee[];
   competitors: Competitor[];
   trends: MarketTrend[];
@@ -225,4 +291,4 @@ export interface GameState {
   schemaVersion: number;
 }
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 3;

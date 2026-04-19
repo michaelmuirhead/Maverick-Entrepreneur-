@@ -1,11 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useGame } from "@/game/store";
-import { PRODUCT_CATEGORIES, Product, ProductCategory } from "@/game/types";
+import { ArchivedProduct, PRODUCT_CATEGORIES, Product, ProductCategory } from "@/game/types";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
 import { ProductList } from "@/components/ProductList";
 import { canStartNextVersion, majorVersion } from "@/game/products";
+import { teamEffects, summarizeTeam } from "@/game/roles";
+import { debtLabel, isRefactorActive, refactorWeeklyCost } from "@/game/debt";
 import { money } from "@/lib/format";
 
 export default function ProductsPage() {
@@ -18,10 +20,13 @@ export default function ProductsPage() {
   const unassign = useGame(s => s.unassignEngineer);
   const startVNext = useGame(s => s.startProductNextVersion);
   const cancelVNext = useGame(s => s.cancelProductNextVersion);
+  const startRefactor = useGame(s => s.startRefactorSprint);
+  const cancelRefactor = useGame(s => s.cancelRefactorSprint);
   const hydrate = useGame(s => s.hydrate);
   const hydrated = useGame(s => s.hydrated);
   const [designing, setDesigning] = useState(false);
   const [vNextTarget, setVNextTarget] = useState<Product | null>(null);
+  const [showArchive, setShowArchive] = useState(false);
 
   useEffect(() => { if (!hydrated) void hydrate(); }, [hydrated, hydrate]);
   if (!state) return <div className="app-shell" style={{ padding: 40 }}>Loading…</div>;
@@ -85,24 +90,37 @@ export default function ProductsPage() {
                 )}
               </>
             )}
-            <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-ink-2)" }}>Engineers:</div>
+            <div style={{ marginTop: 8, fontSize: 12, color: "var(--color-ink-2)" }}>
+              Team{" "}
+              <span className="mono" style={{ fontSize: 11, fontWeight: 600 }}>
+                · {summarizeTeam(teamEffects(p.assignedEngineers, state.employees))}
+              </span>
+            </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
-              {state.employees
-                .filter(e => e.role === "engineer" || e.role === "founder")
-                .map(e => {
-                  const on = p.assignedEngineers.includes(e.id);
-                  return (
-                    <button key={e.id}
-                      onClick={() => on ? unassign(p.id, e.id) : assign(p.id, e.id)}
-                      className="themed-pill"
-                      style={{
-                        background: on ? "var(--color-accent)" : "var(--color-surface-2)",
-                        color: on ? "#fff" : "var(--color-ink)",
-                        cursor: "pointer",
-                      }}
-                    >{e.name}</button>
-                  );
-                })}
+              {state.employees.map(e => {
+                const on = p.assignedEngineers.includes(e.id);
+                const roleHint = e.role === "founder" ? (e.archetype ?? "founder") : e.role;
+                return (
+                  <button key={e.id}
+                    onClick={() => on ? unassign(p.id, e.id) : assign(p.id, e.id)}
+                    className="themed-pill"
+                    style={{
+                      background: on ? "var(--color-accent)" : "var(--color-surface-2)",
+                      color: on ? "#fff" : "var(--color-ink)",
+                      cursor: "pointer",
+                    }}
+                    title={`${e.name} · ${roleHint}`}
+                  >
+                    {e.name}
+                    <span
+                      className="mono"
+                      style={{ marginLeft: 6, fontSize: 9, opacity: 0.75, textTransform: "uppercase" }}
+                    >
+                      {roleHint.slice(0, 3)}
+                    </span>
+                  </button>
+                );
+              })}
             </div>
             {p.nextVersion && (
               <div style={{
@@ -132,6 +150,16 @@ export default function ProductsPage() {
                 </div>
               </div>
             )}
+            {["dev", "launched", "mature", "declining"].includes(p.stage) && (
+              <DebtPanel
+                product={p}
+                currentWeek={state.week}
+                onStart={(weeks) => startRefactor(p.id, weeks)}
+                onCancel={() => cancelRefactor(p.id)}
+                weeklyCost={refactorWeeklyCost(p, teamEffects(p.assignedEngineers, state.employees))}
+              />
+            )}
+
             <div style={{ display: "flex", gap: 14, marginTop: 10, alignItems: "center", flexWrap: "wrap" }}>
               {!p.nextVersion && canStartNextVersion(p) && (
                 <button
@@ -160,6 +188,23 @@ export default function ProductsPage() {
           </div>
         ))}
       </div>
+
+      {state.archivedProducts.length > 0 && (
+        <>
+          <h2 className="sec-head" style={{ marginTop: 18, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <span>Archive <span className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)" }}>({state.archivedProducts.length})</span></span>
+            <button
+              onClick={() => setShowArchive(s => !s)}
+              style={{ fontSize: 11, color: "var(--color-ink-2)", textDecoration: "underline", fontWeight: 600 }}
+            >{showArchive ? "Hide" : "Show"}</button>
+          </h2>
+          {showArchive && (
+            <div style={{ display: "grid", gap: 10 }}>
+              {state.archivedProducts.map(a => <ArchiveCard key={a.id} arch={a} />)}
+            </div>
+          )}
+        </>
+      )}
 
       {designing && <NewProductModal onClose={() => setDesigning(false)} onConfirm={(n, c, pr) => { designNew(n, c, pr); setDesigning(false); }} />}
       {vNextTarget && (
@@ -325,6 +370,176 @@ function NextVersionModal({
           }}>Start v{nextMajor}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+const VERDICT_TONE: Record<ArchivedProduct["verdict"], { label: string; bg: string; fg: string }> = {
+  hit:       { label: "HIT",        bg: "var(--color-good)", fg: "#fff" },
+  solid:     { label: "SOLID",      bg: "var(--color-accent)", fg: "#fff" },
+  meh:       { label: "MEH",        bg: "var(--color-soft)", fg: "var(--color-ink)" },
+  flop:      { label: "FLOP",       bg: "var(--color-warn)", fg: "#fff" },
+  stillborn: { label: "UNSHIPPED",  bg: "var(--color-bad)",  fg: "#fff" },
+};
+
+function ArchiveCard({ arch }: { arch: ArchivedProduct }) {
+  const v = VERDICT_TONE[arch.verdict];
+  const net = arch.lifetimeRevenue - arch.lifetimeCost;
+  const finalTotal = arch.finalUsers.enterprise + arch.finalUsers.smb + arch.finalUsers.selfServe;
+  return (
+    <div
+      className="themed-card"
+      style={{ padding: 12, display: "grid", gap: 8, background: "var(--color-surface)" }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>
+          {arch.name}
+          <span className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", fontWeight: 600, marginLeft: 8 }}>
+            v{arch.finalVersion} · {arch.category}
+          </span>
+        </div>
+        <span
+          className="themed-pill"
+          style={{ background: v.bg, color: v.fg, fontWeight: 700, letterSpacing: ".04em" }}
+        >{v.label}</span>
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+          gap: 6,
+          fontSize: 12,
+          color: "var(--color-ink-2)",
+        }}
+      >
+        <div><span className="mono" style={{ color: "var(--color-ink)", fontWeight: 700 }}>{arch.peakUsers.toLocaleString()}</span> peak users</div>
+        <div><span className="mono" style={{ color: "var(--color-ink)", fontWeight: 700 }}>{money(arch.peakMrr, { short: true })}</span> peak MRR</div>
+        <div><span className="mono" style={{ color: "var(--color-good)", fontWeight: 700 }}>{money(arch.lifetimeRevenue, { short: true })}</span> earned</div>
+        <div><span className="mono" style={{ color: "var(--color-bad)", fontWeight: 700 }}>{money(arch.lifetimeCost, { short: true })}</span> spent</div>
+        <div>
+          Net{" "}
+          <span
+            className="mono"
+            style={{
+              color: net >= 0 ? "var(--color-good)" : "var(--color-bad)",
+              fontWeight: 700,
+            }}
+          >
+            {net >= 0 ? "+" : "-"}{money(Math.abs(net), { short: true })}
+          </span>
+        </div>
+        <div>
+          Closed{" "}
+          <span className="mono" style={{ color: "var(--color-ink)", fontWeight: 700 }}>W{arch.archivedWeek}</span>{" "}
+          · {arch.closedReason === "preLaunch" ? "unshipped" : arch.closedReason === "decayed" ? "aged out" : "sunset"}
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, color: "var(--color-ink-2)", lineHeight: 1.45 }}>
+        {arch.narrative}
+      </div>
+
+      {finalTotal > 0 && (
+        <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)" }}>
+          Final roster · {arch.finalUsers.enterprise.toLocaleString()} ent · {arch.finalUsers.smb.toLocaleString()} SMB · {arch.finalUsers.selfServe.toLocaleString()} self-serve
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Technical debt bar + refactor sprint controls for a single product card.
+ * Shows debt as a 0..100 bar, labels the current state, and lets the player
+ * launch or cancel a refactor sprint while dev/live.
+ */
+function DebtPanel({
+  product, currentWeek, onStart, onCancel, weeklyCost,
+}: {
+  product: Product;
+  currentWeek: number;
+  onStart: (weeks: number) => void;
+  onCancel: () => void;
+  weeklyCost: number;
+}) {
+  const debt = product.techDebt ?? 0;
+  const pct = Math.max(2, Math.min(100, debt));
+  const color =
+    debt >= 80 ? "var(--color-bad)" :
+    debt >= 60 ? "var(--color-warn)" :
+    debt >= 40 ? "var(--color-accent)" :
+                 "var(--color-good)";
+  const active = isRefactorActive(product, currentWeek);
+  const weeksLeft = active && typeof product.refactorSprintUntil === "number"
+    ? Math.max(0, product.refactorSprintUntil - currentWeek)
+    : 0;
+  const [plannedWeeks, setPlannedWeeks] = useState(4);
+
+  return (
+    <div
+      style={{
+        marginTop: 10,
+        padding: "10px 12px",
+        border: "var(--border-card)",
+        borderRadius: "var(--radius-card)",
+        background: "var(--color-surface-2)",
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+        <div style={{ fontWeight: 700, fontSize: 13 }}>
+          Tech debt
+          <span className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", marginLeft: 8, fontWeight: 600 }}>
+            {Math.round(debt)}/100 · {debtLabel(debt)}
+          </span>
+        </div>
+        {active && (
+          <span className="mono" style={{ fontSize: 10, color: "var(--color-accent)", fontWeight: 700, textTransform: "uppercase" }}>
+            Refactoring · {weeksLeft}w left
+          </span>
+        )}
+      </div>
+      <div style={{
+        marginTop: 6, height: 6, background: "var(--color-soft)",
+        border: "2px solid var(--color-line)", borderRadius: 4, overflow: "hidden",
+      }}>
+        <div style={{ height: "100%", width: `${pct}%`, background: color }} />
+      </div>
+
+      {active ? (
+        <div style={{ marginTop: 8, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 11, color: "var(--color-ink-2)" }}>
+            Velocity halved. Paying ~{money(weeklyCost, { short: true })}/wk extra.
+          </span>
+          <button
+            onClick={onCancel}
+            style={{ fontSize: 11, color: "var(--color-bad)", textDecoration: "underline" }}
+          >Cancel sprint</button>
+        </div>
+      ) : (
+        <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+          <label style={{ fontSize: 11, color: "var(--color-ink-2)", fontWeight: 600 }}>
+            Refactor sprint: {plannedWeeks} week{plannedWeeks === 1 ? "" : "s"} · ~{money(weeklyCost * plannedWeeks, { short: true })} total
+          </label>
+          <input
+            type="range" min={1} max={12} step={1}
+            value={plannedWeeks} onChange={e => setPlannedWeeks(parseInt(e.target.value))}
+            style={{ width: "100%" }}
+          />
+          <button
+            onClick={() => onStart(plannedWeeks)}
+            className="themed-pill"
+            style={{
+              alignSelf: "start",
+              background: debt >= 60 ? "var(--color-warn)" : "var(--color-accent)",
+              color: "#fff", padding: "5px 10px", fontSize: 11, fontWeight: 700,
+            }}
+            title="Pays down debt fast at the cost of velocity + weekly cash."
+          >
+            Start refactor sprint
+          </button>
+        </div>
+      )}
     </div>
   );
 }
