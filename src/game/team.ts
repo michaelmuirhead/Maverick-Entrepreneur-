@@ -1,4 +1,4 @@
-import { Employee, EmployeeRole, GameEvent, GameState } from "./types";
+import { Competitor, Employee, EmployeeRole, GameEvent, GameState } from "./types";
 import { RNG, makeIdGen } from "./rng";
 
 const FIRSTS = [
@@ -50,7 +50,15 @@ export function generateCandidates(rng: RNG, n: number, week: number): Employee[
   return candidates;
 }
 
-/** Update morale based on game conditions. Returns mutated employees + any events. */
+/**
+ * Each week: drift morale, react to conditions (runway, salary, workload), then
+ * flip low-morale employees into a notice period rather than an instant departure.
+ * When an employee's notice period ends, they walk out (returned morale of -1
+ * sentinel is stripped by the caller).
+ *
+ * Note: this function processes resignations only. Poaching attempts are driven
+ * from competitors.ts via `tryPoach` and land on the same noticeEndsWeek pathway.
+ */
 export function updateMoraleAndAttrition(
   state: GameState, events: GameEvent[], rng: RNG,
 ): Employee[] {
@@ -58,10 +66,35 @@ export function updateMoraleAndAttrition(
     ? median(state.employees.map(e => e.salary).filter(s => s > 0))
     : 90_000;
 
-  return state.employees.map(e => {
-    if (e.role === "founder") return e;
-    let morale = e.morale;
+  // Workload calc: how many distinct products each engineer/non-founder is on.
+  const workloadByEmp = new Map<string, number>();
+  for (const p of state.products) {
+    if (p.stage === "eol") continue;
+    for (const id of p.assignedEngineers) {
+      workloadByEmp.set(id, (workloadByEmp.get(id) ?? 0) + 1);
+    }
+  }
 
+  return state.employees.flatMap(e => {
+    if (e.role === "founder") return [e];
+
+    // Already on notice — does their notice run out this week?
+    if (typeof e.noticeEndsWeek === "number" && state.week >= e.noticeEndsWeek) {
+      const why = e.noticeReason === "poached" ? "poached by a rival"
+                : e.noticeReason === "offer"   ? "took the competing offer"
+                :                                 "resigned for a new chapter";
+      events.push({
+        id: `ev_${state.week}_exit_${e.id}`,
+        week: state.week, severity: "bad",
+        message: `${e.name} walked out. ${capitalize(why)}. ${attritionFlavor(e, rng)}`,
+        relatedEmployeeId: e.id,
+      });
+      return []; // employee leaves — flatMap drops them
+    }
+    // Still on notice but hasn't hit the week yet — pass through unchanged.
+    if (typeof e.noticeEndsWeek === "number") return [e];
+
+    let morale = e.morale;
     // Drift toward 70 by default
     morale += (70 - morale) * 0.05;
 
@@ -74,24 +107,80 @@ export function updateMoraleAndAttrition(
     if (e.salary < salaryMedian * 0.85) morale -= 1;
     if (e.salary > salaryMedian * 1.15) morale += 0.5;
 
+    // Workload: 1 product = fine, 2 = stretched, 3+ = grinding.
+    const workload = workloadByEmp.get(e.id) ?? 0;
+    if (workload >= 3) morale -= 2;
+    else if (workload === 2) morale -= 0.5;
+
     // Random micro-events
     const jitter = rng.range(-2, 2);
     morale = clamp(morale + jitter, 0, 100);
 
-    // Attrition check: low morale => chance to quit
+    // Resignation check: low morale => chance to give notice (not quit instantly).
     if (morale < 40 && rng.chance(0.03 + (40 - morale) / 1000)) {
+      const noticeEnds = state.week + 2;
       events.push({
-        id: `ev_${state.week}_quit_${e.id}`,
-        week: state.week, severity: "bad",
-        message: `${e.name} (${e.role}) handed in notice. Two weeks until they walk out the door.`,
+        id: `ev_${state.week}_notice_${e.id}`,
+        week: state.week, severity: "warn",
+        message: `${e.name} (${e.role}) gave notice — ${noticeWeeksLeft(noticeEnds, state.week)} weeks until they're gone. You've got a window to counter.`,
         relatedEmployeeId: e.id,
       });
-      // Mark for removal: we return with morale = -1 sentinel for the caller.
-      return { ...e, morale: -1 };
+      return [{ ...e, morale, noticeReason: "resigned", noticeEndsWeek: noticeEnds }];
     }
 
-    return { ...e, morale };
-  }).filter(e => e.morale >= 0);
+    return [{ ...e, morale }];
+  });
+}
+
+/**
+ * Attempt to poach an employee on behalf of a competitor. Returns the updated
+ * employees list plus an event if the attempt landed. Poaching only sticks to
+ * folks NOT already on notice — a wobbly employee with low morale is more
+ * vulnerable. Caller (competitor AI) owns the chance roll; this just applies.
+ */
+export function applyPoachAttempt(
+  state: GameState, poacher: Competitor, events: GameEvent[], rng: RNG,
+): Employee[] {
+  // Pick the most poachable employee: non-founder, not already on notice, lowest morale.
+  const target = [...state.employees]
+    .filter(e => e.role !== "founder" && typeof e.noticeEndsWeek !== "number")
+    .sort((a, b) => a.morale - b.morale)[0];
+  if (!target) return state.employees;
+
+  // Susceptibility: baseline 15% + morale effect + salary gap proxy.
+  const moralePenalty = (70 - target.morale) / 100; // higher when morale is bad
+  const baseChance = 0.15 + Math.max(0, moralePenalty) * 0.5;
+  if (!rng.chance(baseChance)) {
+    events.push({
+      id: `ev_${state.week}_poach_miss_${target.id}`,
+      week: state.week, severity: "info",
+      message: `${poacher.name} pinged ${target.name} about a role. They passed — for now.`,
+      relatedEmployeeId: target.id,
+    });
+    return state.employees;
+  }
+
+  const noticeEnds = state.week + 2;
+  events.push({
+    id: `ev_${state.week}_poach_hit_${target.id}`,
+    week: state.week, severity: "bad",
+    message: `${target.name} has a competing offer from ${poacher.name}. Two weeks to keep them or lose them.`,
+    relatedEmployeeId: target.id,
+  });
+  return state.employees.map(e => e.id === target.id
+    ? { ...e, noticeReason: "poached" as const, noticeEndsWeek: noticeEnds, poacherId: poacher.id }
+    : e);
+}
+
+/** Cost of a counter-offer (salary bump). Scales with prior saves so it can't be spammed. */
+export function counterOfferCost(e: Employee): number {
+  const saves = e.retentionSaves ?? 0;
+  return Math.round(e.salary * (0.15 + saves * 0.05)); // 15%, 20%, 25% annual raise
+}
+
+/** Cost of a one-time retention bonus (stock refresh proxy). Cash out the door today. */
+export function retentionBonusCost(e: Employee): number {
+  return Math.round(e.salary * 0.5); // six months of salary paid as a bonus
 }
 
 function weeklyBurnFromPayroll(state: GameState): number {
@@ -105,4 +194,19 @@ function median(nums: number[]): number {
 }
 function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, n));
+}
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+function noticeWeeksLeft(noticeEndsWeek: number, week: number): number {
+  return Math.max(0, noticeEndsWeek - week);
+}
+function attritionFlavor(e: Employee, rng: RNG): string {
+  const lines = [
+    `The team gathered around a sheet cake that said 'Good Luck ${e.name.split(" ")[0]}' in slightly uneven frosting.`,
+    `Their farewell Slack post hit 37 hug emojis. Unclear if that's a lot or not.`,
+    `They promised to 'stay in touch' which we all know means one LinkedIn like in 2028.`,
+    `${e.name} took the team out for drinks. Two engineers have already updated their résumés.`,
+  ];
+  return rng.pick(lines);
 }

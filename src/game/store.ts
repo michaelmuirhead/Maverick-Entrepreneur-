@@ -5,9 +5,11 @@ import { Employee, GameState, Product, ProductCategory } from "./types";
 import { newGame, NewGameConfig, suggestProductName } from "./init";
 import { advanceWeek } from "./tick";
 import { makeIdGen, makeRng } from "./rng";
-import { applyFundingRound, fundingOffer } from "./finance";
-import { salaryFor } from "./team";
+import { applyFundingRound, fundingOffer, pitchForFunding, PitchOutcome } from "./finance";
+import { counterOfferCost, retentionBonusCost, salaryFor } from "./team";
+import { startNextVersion, canStartNextVersion } from "./products";
 import { loadGame, saveGame } from "@/lib/storage";
+import { money } from "@/lib/format";
 
 interface GameStore {
   state: GameState | null;
@@ -30,13 +32,28 @@ interface GameStore {
   unassignEngineer: (productId: string, employeeId: string) => void;
   designNewProduct: (name: string, category: ProductCategory, pricePerUser: number) => void;
   sunsetProduct: (id: string) => void;
+  /** Kick off development of the product's next major version (v2/v3/...). */
+  startProductNextVersion: (id: string, weeklyBudget: number) => void;
+  /** Cancel an in-flight vNext effort (budget was sunk, progress is lost). */
+  cancelProductNextVersion: (id: string) => void;
 
   // Team actions
   hireCandidate: (candidate: Employee) => void;
   fireEmployee: (id: string) => void;
+  /** Match the competing offer with a salary bump. Costs cash (salary raise paid immediately as signing bonus proxy). */
+  counterOffer: (id: string) => void;
+  /** One-time bonus — more expensive, but gives a bigger morale bump. */
+  retentionBonus: (id: string) => void;
 
   // Finance
   acceptFundingOffer: () => void;
+  /**
+   * Player actively pitches investors. Returns the outcome (offer / reasons passed)
+   * AND records the attempt as an event so the EventLog reflects the pitch either way.
+   * If an offer comes back, it's up to the caller (the Finance UI) to display and
+   * let the player accept it.
+   */
+  pitchForRound: () => PitchOutcome;
 }
 
 export const useGame = create<GameStore>((set, get) => ({
@@ -129,6 +146,37 @@ export const useGame = create<GameStore>((set, get) => ({
     ...s, products: s.products.map(p => p.id === id ? { ...p, stage: "eol" as const, weeksAtStage: 0 } : p),
   })),
 
+  startProductNextVersion: (id, weeklyBudget) => update(set, get, (s) => {
+    const target = s.products.find(p => p.id === id);
+    if (!target || !canStartNextVersion(target)) return s;
+    const updated = startNextVersion(target, s.week, weeklyBudget);
+    if (updated === target) return s;
+    const version = updated.nextVersion?.targetVersion ?? "2.0";
+    return {
+      ...s,
+      products: s.products.map(p => p.id === id ? updated : p),
+      events: [
+        { id: `ev_${s.week}_vstart_${id}`, week: s.week, severity: "info",
+          message: `Kicked off ${target.name} ${version} development at ${money(weeklyBudget, { short: true })}/wk. Engineers assigned to ${target.name} will split time between keep-the-lights-on and the new build.` },
+        ...s.events,
+      ],
+    };
+  }),
+
+  cancelProductNextVersion: (id) => update(set, get, (s) => {
+    const target = s.products.find(p => p.id === id);
+    if (!target || !target.nextVersion) return s;
+    return {
+      ...s,
+      products: s.products.map(p => p.id === id ? { ...p, nextVersion: undefined } : p),
+      events: [
+        { id: `ev_${s.week}_vcancel_${id}`, week: s.week, severity: "warn",
+          message: `Cancelled ${target.name} ${target.nextVersion.targetVersion}. Progress lost, lessons learned — supposedly.` },
+        ...s.events,
+      ],
+    };
+  }),
+
   hireCandidate: (c) => update(set, get, (s) => {
     const salary = c.salary || salaryFor(c.role, c.level);
     // Hiring costs 1 week salary in one-time onboarding/setup
@@ -142,6 +190,56 @@ export const useGame = create<GameStore>((set, get) => ({
       events: [
         { id: `ev_${s.week}_hired_${c.id}`, week: s.week, severity: "good",
           message: `Hired ${c.name} as ${c.role} at $${salary.toLocaleString()}/yr. Welcome aboard.` },
+        ...s.events,
+      ],
+    };
+  }),
+
+  counterOffer: (id) => update(set, get, (s) => {
+    const e = s.employees.find(x => x.id === id);
+    if (!e || typeof e.noticeEndsWeek !== "number") return s;
+    const cost = counterOfferCost(e);
+    if (s.finance.cash < cost) return s;
+    const newSalary = e.salary + cost;
+    return {
+      ...s,
+      finance: { ...s.finance, cash: s.finance.cash - cost },
+      employees: s.employees.map(x => x.id === id ? {
+        ...x,
+        salary: newSalary,
+        morale: Math.min(100, (x.morale || 0) + 15),
+        noticeReason: undefined,
+        noticeEndsWeek: undefined,
+        poacherId: undefined,
+        retentionSaves: (x.retentionSaves ?? 0) + 1,
+      } : x),
+      events: [
+        { id: `ev_${s.week}_counter_${id}`, week: s.week, severity: "good",
+          message: `Counter-offered ${e.name}: salary up to $${newSalary.toLocaleString()}/yr. They're staying. (This time.)` },
+        ...s.events,
+      ],
+    };
+  }),
+
+  retentionBonus: (id) => update(set, get, (s) => {
+    const e = s.employees.find(x => x.id === id);
+    if (!e || typeof e.noticeEndsWeek !== "number") return s;
+    const cost = retentionBonusCost(e);
+    if (s.finance.cash < cost) return s;
+    return {
+      ...s,
+      finance: { ...s.finance, cash: s.finance.cash - cost },
+      employees: s.employees.map(x => x.id === id ? {
+        ...x,
+        morale: Math.min(100, (x.morale || 0) + 25),
+        noticeReason: undefined,
+        noticeEndsWeek: undefined,
+        poacherId: undefined,
+        retentionSaves: (x.retentionSaves ?? 0) + 1,
+      } : x),
+      events: [
+        { id: `ev_${s.week}_bonus_${id}`, week: s.week, severity: "good",
+          message: `Paid ${e.name} a $${cost.toLocaleString()} retention bonus. Smiles restored, stock refresh pending.` },
         ...s.events,
       ],
     };
@@ -170,6 +268,38 @@ export const useGame = create<GameStore>((set, get) => ({
     const next = applyFundingRound(s, offer, events);
     return { ...next, events };
   }),
+
+  pitchForRound: () => {
+    const s = get().state;
+    if (!s) return { kind: "passed" as const, nextRound: "—", reasons: ["No company yet."], diagnostics: { mrr: 0, required: null } };
+    const outcome = pitchForFunding(s);
+
+    if (outcome.kind === "offer") {
+      // Offer events only fire if the pitch actually landed — keeps the log honest.
+      const pitchEvent = {
+        id: `ev_${s.week}_pitch_${outcome.offer.label.replace(/\s+/g, "-")}`,
+        week: s.week,
+        severity: "good" as const,
+        message: `Pitched investors for ${outcome.offer.label}. ${outcome.commentary}`,
+      };
+      const nextState = { ...s, events: [pitchEvent, ...s.events] };
+      set({ state: nextState });
+      void saveGame(nextState);
+    } else {
+      // "Passed" — still log it so the player can see they tried.
+      const pitchEvent = {
+        id: `ev_${s.week}_pitch_${outcome.nextRound}_passed_${Math.floor(Math.random() * 9999)}`,
+        week: s.week,
+        severity: "warn" as const,
+        message: `Pitched investors for ${outcome.nextRound}; they passed. "${outcome.reasons[0]?.split(".")[0] ?? "Come back with more traction"}."`,
+      };
+      const nextState = { ...s, events: [pitchEvent, ...s.events] };
+      set({ state: nextState });
+      void saveGame(nextState);
+    }
+
+    return outcome;
+  },
 }));
 
 function update(set: any, get: any, fn: (s: GameState) => GameState) {

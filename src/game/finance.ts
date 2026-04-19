@@ -24,7 +24,12 @@ export interface FundingOffer {
 
 export function fundingOffer(state: GameState): FundingOffer | null {
   const mrr = computeMrr(state);
-  const hasGrowingProduct = state.products.some(p => p.stage === "launched" && p.health > 60 && p.users > 50);
+  // A product that's either still gaining users (launched) or holding steady with revenue
+  // (mature) both count as real traction from an investor's view. Restricting to "launched"
+  // alone made the Seed offer expire before MRR could ramp past the $5k gate.
+  const hasGrowingProduct = state.products.some(
+    p => (p.stage === "launched" || p.stage === "mature") && p.health > 60 && p.users > 50,
+  );
   const stage = state.company.stage;
 
   if (stage === "pre-seed" && hasGrowingProduct && mrr > 5_000) {
@@ -37,6 +42,71 @@ export function fundingOffer(state: GameState): FundingOffer | null {
     return { label: "Series B", amount: 25_000_000, postMoney: 150_000_000, dilution: 0.17 };
   }
   return null;
+}
+
+/** What the player sees when they pitch for a round. Either an offer, or why investors passed. */
+export type PitchOutcome =
+  | { kind: "offer"; offer: FundingOffer; commentary: string }
+  | { kind: "passed"; nextRound: string; reasons: string[]; diagnostics: { mrr: number; required: number | null } };
+
+/**
+ * Pitch the next round proactively. Unlike fundingOffer (which only succeeds when all
+ * gates are cleared), this function always returns something — either an offer the
+ * player can accept, or concrete reasons investors aren't ready yet. Drives the
+ * player-facing "pursue investors" flow on the Finance page.
+ */
+export function pitchForFunding(state: GameState): PitchOutcome {
+  const mrr = computeMrr(state);
+  const stage = state.company.stage;
+
+  // What's the target round for this stage?
+  const target: { label: string; required: number; amount: number; postMoney: number; dilution: number } | null =
+    stage === "pre-seed" ? { label: "Seed",     required: 5_000,   amount: 2_000_000,  postMoney: 10_000_000,  dilution: 0.2 } :
+    stage === "seed"     ? { label: "Series A", required: 40_000,  amount: 10_000_000, postMoney: 50_000_000,  dilution: 0.2 } :
+    stage === "series-a" ? { label: "Series B", required: 200_000, amount: 25_000_000, postMoney: 150_000_000, dilution: 0.17 } :
+    null;
+
+  if (!target) {
+    return {
+      kind: "passed",
+      nextRound: "—",
+      reasons: ["You're already at Series B. The next step is growth-stage or public markets — not something a deck can fix."],
+      diagnostics: { mrr, required: null },
+    };
+  }
+
+  const reasons: string[] = [];
+
+  // Growing-product gate (Seed only — later rounds don't require this gate)
+  const hasGrowingProduct = state.products.some(
+    p => (p.stage === "launched" || p.stage === "mature") && p.health > 60 && p.users > 50,
+  );
+  if (target.label === "Seed" && !hasGrowingProduct) {
+    reasons.push("Investors want a launched product with real health (>60) and at least 50 paying users. Ship something that's actually working first.");
+  }
+
+  // MRR gate
+  if (mrr < target.required) {
+    const short = target.required - mrr;
+    reasons.push(
+      `MRR is $${Math.round(mrr).toLocaleString()}/mo; ${target.label} investors want at least $${target.required.toLocaleString()}/mo. You're about $${Math.round(short).toLocaleString()}/mo short.`,
+    );
+  }
+
+  if (reasons.length > 0) {
+    return {
+      kind: "passed",
+      nextRound: target.label,
+      reasons,
+      diagnostics: { mrr, required: target.required },
+    };
+  }
+
+  return {
+    kind: "offer",
+    offer: { label: target.label, amount: target.amount, postMoney: target.postMoney, dilution: target.dilution },
+    commentary: `A lead partner wants a second meeting. Terms on the table: $${(target.amount/1e6).toFixed(1)}M at $${(target.postMoney/1e6).toFixed(0)}M post, ~${(target.dilution*100).toFixed(0)}% dilution. Not bad for a deck and a dream.`,
+  };
 }
 
 export function applyFundingRound(state: GameState, offer: FundingOffer, events: GameEvent[]): GameState {

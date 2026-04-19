@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useGame } from "@/game/store";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
-import { generateCandidates } from "@/game/team";
+import { counterOfferCost, generateCandidates, retentionBonusCost } from "@/game/team";
 import { ROLE_LABELS, Employee } from "@/game/types";
 import { makeRng } from "@/game/rng";
 import { money } from "@/lib/format";
@@ -16,6 +16,8 @@ export default function TeamPage() {
   const state = useGame(s => s.state);
   const hire = useGame(s => s.hireCandidate);
   const fire = useGame(s => s.fireEmployee);
+  const counter = useGame(s => s.counterOffer);
+  const bonus = useGame(s => s.retentionBonus);
   const hydrate = useGame(s => s.hydrate);
   const hydrated = useGame(s => s.hydrated);
   const [tab, setTab] = useState<"roster" | "hire">("roster");
@@ -23,11 +25,16 @@ export default function TeamPage() {
   useEffect(() => { if (!hydrated) void hydrate(); }, [hydrated, hydrate]);
 
   // Candidates are derived from the game seed + week so they're stable across re-renders.
+  // We filter out candidates whose ID is already on the roster — hired candidates keep their
+  // ID when they become employees, so this is what makes the "Hire" click feel immediate:
+  // the row disappears from the pool and shows up in Roster on the next render.
   const candidates = useMemo(() => {
     if (!state) return [];
     const rng = makeRng(`${state.seed}:hire-pool:${state.week}`);
-    return generateCandidates(rng, 6, state.week);
-  }, [state?.seed, state?.week]);
+    const pool = generateCandidates(rng, 6, state.week);
+    const hiredIds = new Set(state.employees.map(e => e.id));
+    return pool.filter(c => !hiredIds.has(c.id));
+  }, [state?.seed, state?.week, state?.employees]);
 
   if (!state) return <div className="app-shell" style={{ padding: 40 }}>Loading…</div>;
 
@@ -49,6 +56,31 @@ export default function TeamPage() {
 
       {tab === "roster" ? (
         <>
+          {state.employees.some(e => typeof e.noticeEndsWeek === "number") && (
+            <>
+              <h2 className="sec-head" style={{ marginTop: 18, color: "var(--color-warn)" }}>
+                On notice <span className="tag warn">{state.employees.filter(e => typeof e.noticeEndsWeek === "number").length}</span>
+              </h2>
+              <div className="themed-card" style={{ borderColor: "var(--color-warn)" }}>
+                {state.employees
+                  .filter(e => typeof e.noticeEndsWeek === "number")
+                  .map((e, i, arr) => (
+                    <NoticeRow
+                      key={e.id}
+                      e={e}
+                      week={state.week}
+                      cash={state.finance.cash}
+                      onCounter={() => counter(e.id)}
+                      onBonus={() => bonus(e.id)}
+                      onAccept={() => fire(e.id)}
+                      isFirst={i === 0}
+                      _hasMore={i < arr.length - 1}
+                    />
+                  ))}
+              </div>
+            </>
+          )}
+
           <h2 className="sec-head" style={{ marginTop: 18 }}>Your people <span className="tag">{state.employees.length}</span></h2>
           <div className="themed-card">
             {state.employees.map((e, i) => (
@@ -62,7 +94,14 @@ export default function TeamPage() {
                   display: "grid", placeItems: "center", fontSize: 20, background: "var(--color-surface-2)",
                 }}>{ROLE_GLYPH[e.role] ?? "👤"}</div>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 14 }}>{e.name}</div>
+                  <div style={{ fontWeight: 700, fontSize: 14 }}>
+                    {e.name}
+                    {typeof e.noticeEndsWeek === "number" && (
+                      <span className="themed-pill warn" style={{ marginLeft: 8, fontSize: 10 }}>
+                        notice
+                      </span>
+                    )}
+                  </div>
                   <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>
                     {ROLE_LABELS[e.role]} L{e.level} · {money(e.salary, { short: true })}/yr · skill {Math.round(e.skill)} · morale {Math.round(e.morale)}
                   </div>
@@ -103,6 +142,68 @@ function MoraleBar({ morale }: { morale: number }) {
       border: "2px solid var(--color-line)", borderRadius: 4, overflow: "hidden", maxWidth: 180,
     }}>
       <div style={{ height: "100%", width: `${Math.max(4, morale)}%`, background: color }} />
+    </div>
+  );
+}
+
+function NoticeRow({
+  e, week, cash, onCounter, onBonus, onAccept, isFirst,
+}: {
+  e: Employee; week: number; cash: number;
+  onCounter: () => void; onBonus: () => void; onAccept: () => void;
+  isFirst: boolean; _hasMore: boolean;
+}) {
+  const weeksLeft = Math.max(0, (e.noticeEndsWeek ?? week) - week);
+  const reasonLabel = e.noticeReason === "poached" ? "Rival made a competing offer"
+                    : e.noticeReason === "offer"   ? "Got an outside offer"
+                    :                                 "Resigned";
+  const counterCost = counterOfferCost(e);
+  const bonusCost = retentionBonusCost(e);
+  const canCounter = cash >= counterCost;
+  const canBonus = cash >= bonusCost;
+  return (
+    <div style={{
+      padding: "12px 14px",
+      borderTop: isFirst ? 0 : "2px dashed var(--color-line)",
+      display: "grid", gap: 8,
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 8 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>{e.name}</div>
+          <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>
+            {ROLE_LABELS[e.role]} L{e.level} · {reasonLabel} · {weeksLeft}w left
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        <button
+          onClick={onCounter}
+          disabled={!canCounter}
+          className="themed-pill"
+          style={{
+            background: canCounter ? "var(--color-accent)" : "var(--color-muted)",
+            color: "#fff",
+            padding: "8px 10px", fontSize: 12, fontWeight: 700,
+            opacity: canCounter ? 1 : 0.6,
+            cursor: canCounter ? "pointer" : "not-allowed",
+          }}
+        >Counter (+{money(counterCost, { short: true })}/yr)</button>
+        <button
+          onClick={onBonus}
+          disabled={!canBonus}
+          className="themed-pill"
+          style={{
+            background: canBonus ? "var(--color-good)" : "var(--color-muted)",
+            color: "#fff",
+            padding: "8px 10px", fontSize: 12, fontWeight: 700,
+            opacity: canBonus ? 1 : 0.6,
+            cursor: canBonus ? "pointer" : "not-allowed",
+          }}
+        >Bonus ({money(bonusCost, { short: true })})</button>
+      </div>
+      <button onClick={onAccept} style={{ fontSize: 11, color: "var(--color-bad)", textDecoration: "underline", textAlign: "left" }}>
+        Accept their resignation now
+      </button>
     </div>
   );
 }

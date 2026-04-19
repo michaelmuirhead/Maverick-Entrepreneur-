@@ -33,9 +33,11 @@ function randomName(rng: RNG): string {
 }
 
 function startingCashAmount(c: NewGameConfig["startingCash"]): number {
+  // Balanced from sim data: lean at $15k bankrupted before the player made any decision.
+  // Bootstrapped at $50k left no margin for a rushed dev push. Angel-backed was already fine.
   switch (c) {
-    case "lean": return 15_000;
-    case "bootstrapped": return 50_000;
+    case "lean":         return 25_000;
+    case "bootstrapped": return 55_000;
     case "angel-backed": return 250_000;
   }
 }

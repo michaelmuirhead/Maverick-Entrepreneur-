@@ -11,13 +11,40 @@ export type ProductCategory =
   | "creative"
   | "infrastructure";
 
-export const PRODUCT_CATEGORIES: { id: ProductCategory; label: string; blurb: string }[] = [
-  { id: "productivity", label: "Productivity", blurb: "Forms, docs, scheduling — broad market, lots of competition." },
-  { id: "dev-tools", label: "Dev Tools", blurb: "High-margin, loyal users, smaller TAM." },
-  { id: "analytics", label: "Analytics", blurb: "Sticky enterprise spend, slow sales cycles." },
-  { id: "crm", label: "CRM", blurb: "Big market, incumbents are entrenched." },
-  { id: "creative", label: "Creative", blurb: "Design, video, audio — great for virality." },
-  { id: "infrastructure", label: "Infrastructure", blurb: "Databases, queues, storage. Enterprise deals, hard to crack." },
+export const PRODUCT_CATEGORIES: {
+  id: ProductCategory;
+  label: string;
+  /** One-liner shown in the category list. */
+  blurb: string;
+  /** Longer description shown once a category is highlighted. */
+  detail: string;
+  /** Rough suggested monthly price point, used as a default. */
+  suggestedPrice: number;
+}[] = [
+  { id: "productivity", label: "Productivity",
+    blurb: "Forms, docs, scheduling — broad market, lots of competition.",
+    detail: "Tools that help people and teams plan, collaborate, and ship work. Largest TAM by a mile; also the most crowded category. Expect heavy price pressure but fast word-of-mouth when a product clicks.",
+    suggestedPrice: 12 },
+  { id: "dev-tools", label: "Dev Tools",
+    blurb: "High-margin, loyal users, smaller TAM.",
+    detail: "Build tools, CI/CD, editors, runners, APIs. Developers pay well for quality and hate switching — but you have to impress them first. Viral among engineering teams, slower to climb in revenue.",
+    suggestedPrice: 29 },
+  { id: "analytics", label: "Analytics",
+    blurb: "Sticky enterprise spend, slow sales cycles.",
+    detail: "Dashboards, metrics, BI, event tracking. Customers stick around for years once wired in, but sales take months and enterprise wants custom everything. Big contracts, patient founders win.",
+    suggestedPrice: 49 },
+  { id: "crm", label: "CRM",
+    blurb: "Big market, incumbents are entrenched.",
+    detail: "Sales pipelines, contacts, deal management. Huge market, but Salesforce and HubSpot cast long shadows. A sharp vertical focus beats a general-purpose play. Retention is decent once you're embedded.",
+    suggestedPrice: 35 },
+  { id: "creative", label: "Creative",
+    blurb: "Design, video, audio — great for virality.",
+    detail: "Canvas tools, video editors, audio mixers, design systems. Consumers and prosumers drive growth; the output is inherently shareable, which drives free acquisition. Churn can be rough if the tool feels like a toy.",
+    suggestedPrice: 15 },
+  { id: "infrastructure", label: "Infrastructure",
+    blurb: "Databases, queues, storage. Enterprise deals, hard to crack.",
+    detail: "Databases, queues, edge compute, observability, storage. Highest ARR per customer but the longest sales cycles. Security reviews, compliance, and 99.99% SLAs come standard. Not for the impatient.",
+    suggestedPrice: 99 },
 ];
 
 export type ProductStage =
@@ -48,6 +75,15 @@ export interface Product {
   assignedEngineers: ID[];     // employees currently on this product
   // Launch outcome memory (for narrative + UI)
   launchBuzz?: number;         // 0..100 hype at launch
+
+  // v2 / vN development — a next version being built on top of a launched product.
+  // When ready, it bumps the major version, restores health, and boosts quality and users.
+  nextVersion?: {
+    targetVersion: string;     // e.g. "2.0", "3.0"
+    progress: number;          // 0..100
+    startedWeek: number;
+    devBudget: number;         // $/week earmarked for the vN build
+  };
 }
 
 export type EmployeeRole = "engineer" | "designer" | "pm" | "sales" | "marketing" | "ops" | "founder";
@@ -73,7 +109,24 @@ export interface Employee {
   hiredWeek: number;
   archetype?: "technical" | "business" | "design"; // founder flavor
   equity?: number;             // 0..1 — founder only
+
+  // Retention / exit state ---
+  /** Why the employee is on notice: poached by a rival, resigned on their own, or got a competing offer. */
+  noticeReason?: "poached" | "resigned" | "offer";
+  /** Tick week this employee's notice ends and they walk. */
+  noticeEndsWeek?: number;
+  /** Who tried to poach them (competitor id). */
+  poacherId?: ID;
+  /** Number of retention "saves" the player has used — each one bumps the cost of the next. */
+  retentionSaves?: number;
 }
+
+/** Rival company personality — shapes the moves they make each week. */
+export type CompetitorPersonality =
+  | "aggressive"     // frequent feature strikes, price cuts, hostile poaching
+  | "well-funded"    // slower but heavy — big product launches, aggressive hiring
+  | "scrappy"        // unpredictable — viral campaigns, surprise launches, niche wins
+  | "enterprise";    // quiet but strong — marquee logos, long sales cycles
 
 export interface Competitor {
   id: ID;
@@ -83,6 +136,16 @@ export interface Competitor {
   marketShare: number;         // 0..1 within its category
   aggression: number;          // 0..1 likelihood to ship disruptive moves
   lastMoveWeek?: number;
+  /** Strategic archetype. If absent, legacy competitor from old save — defaults applied at runtime. */
+  personality?: CompetitorPersonality;
+  /** Simulated cash — drives how big a move they can make. */
+  cash?: number;
+  /** Simulated headcount — drives launch cadence and poaching success. */
+  headcount?: number;
+  /** Stage on the fundraising ladder, similar to player. Controls when they can raise next. */
+  fundingStage?: "pre-seed" | "seed" | "series-a" | "series-b";
+  /** Most recent round week, used for cooldowns. */
+  lastFundingWeek?: number;
 }
 
 export type MarketTrendKind =
@@ -153,6 +216,10 @@ export interface GameState {
 
   // Game over flags
   gameOver?: { reason: "bankrupt" | "acquired" | "ipo"; week: number; narrative: string };
+
+  // Snapshot of deltas from the most recent advanceWeek — populated by the tick
+  // so the UI can show an inline week recap without a modal.
+  lastTickDeltas?: { week: number; cash: number; mrr: number; users: number };
 
   // Version for save migrations
   schemaVersion: number;

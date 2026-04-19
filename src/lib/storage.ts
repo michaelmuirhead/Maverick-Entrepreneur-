@@ -13,6 +13,29 @@ export function migrateSave(state: GameState): GameState {
       marketingBudget: typeof (p as { marketingBudget?: number }).marketingBudget === "number"
         ? p.marketingBudget
         : 0,
+      // v1.2: nextVersion is optional — leave undefined if not present
+      nextVersion: p.nextVersion,
+    })),
+    // v1.2: employees got notice/retention fields — absent on older saves.
+    employees: state.employees.map(e => ({
+      ...e,
+      retentionSaves: typeof e.retentionSaves === "number" ? e.retentionSaves : 0,
+      // noticeReason, noticeEndsWeek, poacherId are left undefined by default —
+      // only populated when an employee is actually on notice.
+    })),
+    // v1.2: competitors got personality + simulated cash/headcount/funding stage.
+    // Defaults for legacy saves are computed at AI-tick time via withDefaults(),
+    // but we also seed them here so the UI reads consistent data immediately.
+    competitors: state.competitors.map(c => ({
+      ...c,
+      personality: c.personality
+        ?? (c.aggression > 0.55 ? "aggressive"
+            : c.marketShare > 0.12 ? "well-funded"
+            : c.strength > 65 ? "enterprise"
+            : "scrappy"),
+      cash: typeof c.cash === "number" ? c.cash : 1_500_000,
+      headcount: typeof c.headcount === "number" ? c.headcount : 12,
+      fundingStage: c.fundingStage ?? "seed",
     })),
   };
 }

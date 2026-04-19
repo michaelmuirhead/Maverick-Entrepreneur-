@@ -1,15 +1,20 @@
 import { GameEvent, Product, ProductCategory, ProductStage } from "./types";
 import { RNG } from "./rng";
 
-/** Weekly cost to keep a product alive (hosting, support, upkeep, marketing). */
+/** Weekly cost to keep a product alive (hosting, support, upkeep, marketing, vNext dev). */
 export function maintenanceCost(p: Product): number {
   if (p.stage === "concept" || p.stage === "eol") return 0;
   const dev = p.stage === "dev" ? p.devBudget : 0;
   // Marketing only burns once a product is live. On concept/dev we ignore it (there's nothing to market).
   const marketing = ["launched", "mature", "declining"].includes(p.stage) ? (p.marketingBudget ?? 0) : 0;
+  // vNext dev burn runs alongside live-product maintenance until it ships.
+  const vNextDev = p.nextVersion ? Math.max(0, p.nextVersion.devBudget) : 0;
   const users = Math.max(0, p.users);
-  // Rough: $0.10/user/week hosting + $500 base + dev budget + marketing
-  return dev + marketing + 500 + users * 0.1;
+  // Base overhead: a product in dev has almost no hosting/support cost, so charge $200/wk
+  // (tools, CI, staging). Once live, hosting + support + on-call bumps that to $500/wk.
+  const base = p.stage === "dev" ? 200 : 500;
+  // Per-user hosting stays flat at $0.10/wk across live stages.
+  return dev + marketing + vNextDev + base + users * 0.1;
 }
 
 /**
@@ -63,9 +68,95 @@ export function churnRate(p: Product): number {
   return stagePenalty + healthPenalty * 0.03;
 }
 
+/**
+ * Parse a version string like "1.0" → 1, "2.3" → 2. We only bump the major.
+ * Bad or missing versions default to 1.
+ */
+export function majorVersion(v: string | undefined): number {
+  if (!v) return 1;
+  const n = parseInt(v.split(".")[0], 10);
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/**
+ * Can this product start a vNext project right now? Only live products qualify,
+ * and only one vNext can be in flight at a time.
+ */
+export function canStartNextVersion(p: Product): boolean {
+  if (p.nextVersion) return false;
+  return p.stage === "launched" || p.stage === "mature" || p.stage === "declining";
+}
+
+/**
+ * Begin a vNext effort on an existing product. Doesn't charge cash directly —
+ * the weekly devBudget is spent as part of the normal tick via maintenanceCost,
+ * so the call here just attaches the plan.
+ */
+export function startNextVersion(p: Product, week: number, weeklyBudget: number): Product {
+  if (!canStartNextVersion(p)) return p;
+  const targetMajor = majorVersion(p.version) + 1;
+  return {
+    ...p,
+    nextVersion: {
+      targetVersion: `${targetMajor}.0`,
+      progress: 0,
+      startedWeek: week,
+      devBudget: Math.max(0, Math.round(weeklyBudget)),
+    },
+  };
+}
+
+/** Progress a vNext one tick. If it completes, apply its benefits and return the new product. */
+function tickNextVersion(p: Product, events: GameEvent[], week: number, rng: RNG): Product {
+  if (!p.nextVersion) return p;
+  const engineersOnIt = p.assignedEngineers.length;
+  // vNext work is a little slower than a greenfield build — existing product has surface area.
+  const progressGain = Math.min(10, 1.5 + engineersOnIt * 1.5 + p.nextVersion.devBudget / 2500);
+  const progress = Math.min(100, p.nextVersion.progress + progressGain);
+  if (progress < 100) {
+    return { ...p, nextVersion: { ...p.nextVersion, progress } };
+  }
+  // Ship vNext! Restore health, boost quality, small user bump from "excitement".
+  const newVersion = p.nextVersion.targetVersion;
+  const userBump = Math.round(p.users * rng.range(0.05, 0.12));
+  const quality = Math.min(98, Math.round(p.quality + rng.range(6, 14)));
+  const health = Math.min(100, Math.round((p.health + 100) / 2 + rng.range(3, 8))); // pull toward 100
+  const buzz = Math.round(Math.min(100, 55 + engineersOnIt * 4 + rng.range(0, 15)));
+  events.push({
+    id: `ev_${week}_vship_${p.id}`,
+    week, severity: "good",
+    message: `${p.name} ${newVersion} shipped. Refresh buzz ${buzz}/100 — quality up, users ticking up, aging clock reset. ${vShipFlavor(rng)}`,
+    relatedProductId: p.id,
+  });
+  // If the product was declining, a vNext drags it back to "launched".
+  const nextStage = p.stage === "declining" ? "launched" : p.stage;
+  return {
+    ...p,
+    version: newVersion,
+    quality,
+    health,
+    users: p.users + userBump,
+    launchBuzz: buzz,
+    stage: nextStage,
+    weeksAtStage: nextStage === p.stage ? p.weeksAtStage : 0,
+    nextVersion: undefined,
+  };
+}
+
+function vShipFlavor(rng: RNG): string {
+  return rng.pick([
+    "Existing customers are posting screenshots unprompted.",
+    "The changelog is longer than the original launch post.",
+    "Support tickets dropped 20% overnight. For now.",
+    "Two analysts upgraded their rating. The rest are still asleep.",
+  ]);
+}
+
 /** Determine which stage a product should be in this week (may return same stage). */
 export function advanceProductStage(p: Product, events: GameEvent[], week: number, rng: RNG): Product {
   let np = { ...p, ageWeeks: p.ageWeeks + 1, weeksAtStage: p.weeksAtStage + 1 };
+  // Progress any in-flight vNext before we evaluate stage transitions this tick.
+  np = tickNextVersion(np, events, week, rng);
 
   switch (np.stage) {
     case "concept":

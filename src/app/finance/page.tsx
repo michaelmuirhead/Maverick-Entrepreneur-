@@ -1,24 +1,30 @@
 "use client";
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useGame } from "@/game/store";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
 import { MrrChart } from "@/components/MrrChart";
 import { getHeadlineStats } from "@/game/tick";
-import { fundingOffer } from "@/game/finance";
+import { fundingOffer, PitchOutcome } from "@/game/finance";
 import { money } from "@/lib/format";
 import { weeklyPayroll } from "@/game/team";
 
 export default function FinancePage() {
   const state = useGame(s => s.state);
   const accept = useGame(s => s.acceptFundingOffer);
+  const pitch = useGame(s => s.pitchForRound);
   const hydrate = useGame(s => s.hydrate);
   const hydrated = useGame(s => s.hydrated);
+  const [lastPitch, setLastPitch] = useState<null | { week: number; outcome: PitchOutcome }>(null);
   useEffect(() => { if (!hydrated) void hydrate(); }, [hydrated, hydrate]);
   if (!state) return <div className="app-shell" style={{ padding: 40 }}>Loading…</div>;
   const stats = getHeadlineStats(state);
   const payroll = weeklyPayroll(state.employees);
   const offer = fundingOffer(state);
+  // Reset any stale pitch feedback when the player advances a week — investors won't
+  // rescind an offer mid-tick, but stale rejection diagnostics lie once MRR moves.
+  const freshPitch = lastPitch && lastPitch.week === state.week ? lastPitch.outcome : null;
+  const pitchedOffer = freshPitch?.kind === "offer" ? freshPitch.offer : null;
 
   return (
     <main className="app-shell" style={{ paddingTop: "calc(16px + var(--safe-top))" }}>
@@ -45,20 +51,61 @@ export default function FinancePage() {
       <h2 className="sec-head" style={{ marginTop: 18 }}>Fundraising</h2>
       <div className="themed-card" style={{ padding: 14 }}>
         <div className="mono" style={{ fontSize: 12, color: "var(--color-ink-2)" }}>Stage: {state.company.stage}</div>
-        {offer ? (
+
+        {/* Existing "on the table" offer (from a passive/random source or a successful pitch this week). */}
+        {(offer || pitchedOffer) && (
           <div style={{ marginTop: 10 }}>
-            <div style={{ fontWeight: 700, fontSize: 16 }}>{offer.label} offer on the table</div>
+            <div style={{ fontWeight: 700, fontSize: 16 }}>
+              {(offer ?? pitchedOffer)!.label} offer on the table
+            </div>
             <div className="mono" style={{ fontSize: 13, color: "var(--color-ink-2)", marginTop: 4 }}>
-              {money(offer.amount, { short: true })} at {money(offer.postMoney, { short: true })} post · {(offer.dilution * 100).toFixed(0)}% dilution
+              {money((offer ?? pitchedOffer)!.amount, { short: true })} at {money((offer ?? pitchedOffer)!.postMoney, { short: true })} post · {((offer ?? pitchedOffer)!.dilution * 100).toFixed(0)}% dilution
             </div>
             <button onClick={accept} className="themed-pill" style={{
               marginTop: 10, background: "var(--color-accent)", color: "#fff",
               padding: "10px 14px", fontSize: 14,
             }}>Close the round</button>
           </div>
-        ) : (
-          <div style={{ marginTop: 10, color: "var(--color-ink-2)", fontSize: 13 }}>
-            No offers this week. Investors want to see signal: a launched product with traction and healthy MRR for your stage.
+        )}
+
+        {/* Active pitch action. Always available — the outcome tells you exactly where you stand. */}
+        {state.company.stage !== "series-b" && !offer && (
+          <div style={{ marginTop: offer || pitchedOffer ? 14 : 10 }}>
+            <button
+              onClick={() => setLastPitch({ week: state.week, outcome: pitch() })}
+              className="themed-pill"
+              style={{
+                background: "var(--color-accent)", color: "#fff",
+                padding: "10px 14px", fontSize: 14,
+              }}
+            >
+              {state.company.stage === "pre-seed" ? "Pitch investors for Seed"
+                : state.company.stage === "seed" ? "Pitch investors for Series A"
+                : "Pitch investors for Series B"}
+            </button>
+            <p style={{ marginTop: 8, fontSize: 12, color: "var(--color-ink-2)", lineHeight: 1.4 }}>
+              Active pitch — investors will give you specific feedback either way. No more waiting on random phone calls.
+            </p>
+          </div>
+        )}
+
+        {/* Result of the pitch this week, if they passed. */}
+        {freshPitch?.kind === "passed" && (
+          <div
+            style={{
+              marginTop: 12,
+              padding: "10px 12px",
+              border: "var(--border-card)",
+              borderRadius: "var(--radius-card)",
+              background: "var(--color-surface-2)",
+            }}
+          >
+            <div style={{ fontWeight: 700, fontSize: 13, color: "var(--color-warn)" }}>
+              Investors passed on {freshPitch.nextRound}
+            </div>
+            <ul style={{ margin: "6px 0 0 0", paddingLeft: 18, fontSize: 12, color: "var(--color-ink-2)", lineHeight: 1.5 }}>
+              {freshPitch.reasons.map((r, i) => (<li key={i}>{r}</li>))}
+            </ul>
           </div>
         )}
       </div>

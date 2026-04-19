@@ -7,6 +7,7 @@ import { KpiGrid } from "@/components/KpiGrid";
 import { MrrChart } from "@/components/MrrChart";
 import { ProductList } from "@/components/ProductList";
 import { EventLog } from "@/components/EventLog";
+import { WeekRecap } from "@/components/WeekRecap";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
 import { NextMilestone } from "@/components/NextMilestone";
@@ -37,7 +38,8 @@ export default function HQPage() {
       <MrrChart />
       <h2 className="sec-head">Your products <span className="tag">{state.products.length}</span></h2>
       <ProductList limit={4} />
-      <h2 className="sec-head">This week at the office <span className="tag">{state.events.slice(0, 8).length}</span></h2>
+      <h2 className="sec-head">This week at the office <span className="tag">{state.events.filter(e => e.week === state.week).length}</span></h2>
+      <WeekRecap />
       <EventLog limit={6} />
 
       {state.gameOver && (

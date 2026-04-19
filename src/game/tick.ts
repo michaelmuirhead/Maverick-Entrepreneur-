@@ -30,8 +30,12 @@ export function advanceWeek(state: GameState): GameState {
   // 1) Update market trends
   const nextTrends = updateTrends({ ...state, week: nextWeek }, events, rng);
 
-  // 2) Competitor moves
-  const nextCompetitors = runCompetitorAi({ ...state, week: nextWeek, trends: nextTrends }, events, rng);
+  // 2) Competitor moves — may mutate player employees via poaching, so we thread
+  //    the returned employees list into the rest of the tick as the "current" roster.
+  const {
+    competitors: nextCompetitors,
+    employees: employeesAfterPoach,
+  } = runCompetitorAi({ ...state, week: nextWeek, trends: nextTrends }, events, rng);
 
   // 3) Product simulation: signups, churn, health decay, stage transitions
   const nextProducts: Product[] = state.products.map((p) => {
@@ -77,7 +81,7 @@ export function advanceWeek(state: GameState): GameState {
   // 4) Finance: revenue - expenses
   const revenue = nextProducts.reduce((s, p) => s + weeklyRevenue(p), 0);
   const maintenance = nextProducts.reduce((s, p) => s + maintenanceCost(p), 0);
-  const payroll = weeklyPayroll(state.employees);
+  const payroll = weeklyPayroll(employeesAfterPoach);
   const weeklyBurn = payroll + maintenance;
   const netChange = revenue - weeklyBurn;
   let nextCash = state.finance.cash + netChange;
@@ -98,7 +102,8 @@ export function advanceWeek(state: GameState): GameState {
     nextCash = 0;
   }
 
-  // 5) Team: morale + attrition
+  // 5) Team: morale + attrition (operates on employees post-poaching so rivals
+  //    that flipped someone into notice this tick don't get undone here).
   const staged: GameState = {
     ...state,
     week: nextWeek,
@@ -108,6 +113,7 @@ export function advanceWeek(state: GameState): GameState {
       mrr: nextProducts.reduce((s, p) => s + (["launched","mature","declining"].includes(p.stage) ? p.users * p.pricePerUser : 0), 0),
     },
     products: nextProducts,
+    employees: employeesAfterPoach,
   };
   const nextEmployees = updateMoraleAndAttrition(staged, events, rng);
 
@@ -126,6 +132,16 @@ export function advanceWeek(state: GameState): GameState {
   // 9) Merge events (latest first, capped)
   const mergedEvents = [...events.reverse(), ...state.events].slice(0, EVENT_LIMIT);
 
+  // 10) Snapshot this tick's headline deltas so the HQ can render an inline recap.
+  const prevUsers = state.products.reduce((s, p) => s + p.users, 0);
+  const nextUsers = nextProducts.reduce((s, p) => s + p.users, 0);
+  const lastTickDeltas = {
+    week: nextWeek,
+    cash: nextCash - state.finance.cash,
+    mrr: staged.finance.mrr - state.finance.mrr,
+    users: nextUsers - prevUsers,
+  };
+
   return {
     ...staged,
     year,
@@ -140,6 +156,7 @@ export function advanceWeek(state: GameState): GameState {
     },
     events: mergedEvents,
     gameOver: nextGameOver,
+    lastTickDeltas,
   };
 }
 

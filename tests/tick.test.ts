@@ -28,7 +28,7 @@ describe("newGame / init", () => {
     expect(s.week).toBe(0);
     expect(s.year).toBe(1);
     expect(s.quarter).toBe(1);
-    expect(s.finance.cash).toBe(50_000);
+    expect(s.finance.cash).toBe(55_000);
     expect(s.products).toHaveLength(1);
     expect(s.products[0].stage).toBe("concept");
     expect(s.employees).toHaveLength(2); // founder + cofounder
@@ -154,6 +154,21 @@ describe("finance math", () => {
     expect(offer?.amount).toBe(2_000_000);
   });
 
+  it("fundingOffer ALSO returns Seed for mature products (so offer doesn't expire before MRR ramp)", () => {
+    const s = baseGame();
+    const boosted: GameState = {
+      ...s,
+      products: [{
+        ...s.products[0],
+        stage: "mature",
+        health: 75,
+        users: 500,
+        pricePerUser: 20, // MRR = 10_000
+      }],
+    };
+    expect(fundingOffer(boosted)?.label).toBe("Seed");
+  });
+
   it("applyFundingRound adds cash and advances company stage", () => {
     const s = baseGame();
     const events: GameEvent[] = [];
@@ -265,5 +280,69 @@ describe("history caps", () => {
     for (let i = 0; i < 80; i++) s = advanceWeek(s);
     expect(s.finance.weeklyRevenueHistory.length).toBeLessThanOrEqual(52);
     expect(s.finance.weeklyBurnHistory.length).toBeLessThanOrEqual(52);
+  });
+});
+
+describe("product versioning (v2)", () => {
+  // Build a launched product inline so we can exercise the vNext lifecycle without
+  // waiting ~15 weeks for dev to finish in a real game.
+  function launchedProduct(overrides: Partial<Product> = {}): Product {
+    return {
+      id: "p_test",
+      name: "TestProd",
+      category: "productivity",
+      stage: "launched",
+      version: "1.0",
+      health: 60, quality: 60, users: 500,
+      pricePerUser: 12,
+      devProgress: 100, devBudget: 0, marketingBudget: 0,
+      weeksAtStage: 2, weeksSinceLaunch: 2, ageWeeks: 10,
+      assignedEngineers: [],
+      ...overrides,
+    };
+  }
+
+  it("progresses nextVersion each tick and eventually ships, bumping version + resetting health", () => {
+    const rng = makeRng("vnext-test");
+    const events: GameEvent[] = [];
+    let p: Product = launchedProduct({
+      health: 40, quality: 50,
+      assignedEngineers: ["e1", "e2", "e3"],
+      nextVersion: { targetVersion: "2.0", progress: 0, startedWeek: 1, devBudget: 8000 },
+    });
+    // Drive many ticks — should complete within ~30 weeks.
+    for (let i = 0; i < 30 && p.nextVersion; i++) {
+      p = advanceProductStage(p, events, 1 + i, rng);
+    }
+    expect(p.nextVersion).toBeUndefined();
+    expect(p.version).toBe("2.0");
+    expect(p.health).toBeGreaterThan(60);
+    expect(p.quality).toBeGreaterThan(50);
+    expect(events.some(e => e.id.startsWith("ev_") && e.id.includes("vship"))).toBe(true);
+  });
+
+  it("a declining product with a shipped vNext returns to launched", () => {
+    const rng = makeRng("vnext-revive");
+    const events: GameEvent[] = [];
+    let p: Product = launchedProduct({
+      stage: "declining",
+      health: 20, quality: 55,
+      assignedEngineers: ["e1", "e2"],
+      nextVersion: { targetVersion: "2.0", progress: 95, startedWeek: 1, devBudget: 6000 },
+    });
+    p = advanceProductStage(p, events, 50, rng);
+    // One tick should push progress >= 100 → ship.
+    expect(p.nextVersion).toBeUndefined();
+    expect(p.stage).toBe("launched");
+    expect(p.version).toBe("2.0");
+  });
+
+  it("maintenanceCost includes the vNext weekly budget", () => {
+    const plain = launchedProduct({ marketingBudget: 0 });
+    const withV2 = launchedProduct({
+      marketingBudget: 0,
+      nextVersion: { targetVersion: "2.0", progress: 10, startedWeek: 1, devBudget: 4000 },
+    });
+    expect(maintenanceCost(withV2) - maintenanceCost(plain)).toBe(4000);
   });
 });
