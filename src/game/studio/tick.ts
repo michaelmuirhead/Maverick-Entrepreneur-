@@ -399,7 +399,7 @@ export function tickStudio(state: GameStudioState): GameStudioState {
   // -----------------------------------------------------------------------------------
   // 14) Bankruptcy check
   // -----------------------------------------------------------------------------------
-  let gameOver = state.gameOver;
+  let gameOver: GameStudioState["gameOver"] = state.gameOver;
   if (finance.cash <= -10_000 && !gameOver) {
     gameOver = {
       reason: "bankrupt",
