@@ -295,7 +295,7 @@ export function migrateEntrepreneurSave(raw: unknown): EntrepreneurState {
       personalWealth: typeof raw.personalWealth === "number" ? raw.personalWealth : 0,
       founderName: typeof raw.founderName === "string" && raw.founderName.trim().length > 0
         ? raw.founderName
-        : (ventures[0] && isSaasVenture(ventures[0]) ? ventures[0].company.founderName : "Founder"),
+        : (ventures[0]?.employees.find(e => e.role === "founder")?.name ?? "Founder"),
       week: typeof raw.week === "number" ? raw.week : (ventures[0]?.week ?? 0),
       ventures,
       activeVentureId,
