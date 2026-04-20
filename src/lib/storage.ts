@@ -28,6 +28,13 @@ import { initOffice } from "@/game/office";
 import { initCulture } from "@/game/culture";
 import { initSupport } from "@/game/support";
 import { initRegions, initIpo } from "@/game/portfolio";
+import {
+  ENTREPRENEUR_SCHEMA_VERSION,
+  EntrepreneurState,
+  AnyVentureState,
+  isSaasVenture,
+  isStudioVenture,
+} from "@/game/entrepreneur";
 
 const KEY = "maverick.save.v1";
 
@@ -239,17 +246,109 @@ export function migrateSave(state: GameState): GameState {
   };
 }
 
-export async function loadGame(): Promise<GameState | null> {
+// =====================================================================================
+// v8: Entrepreneur / Portfolio wrapper
+// -------------------------------------------------------------------------------------
+// The top-level save shape changed from a bare `GameState` to an
+// `EntrepreneurState` that holds a list of ventures. Legacy saves get wrapped
+// as `ventures: [migratedSaas]`. Studio ventures run through their own
+// migration hook (currently a no-op — the schema is brand new at v8).
+// =====================================================================================
+
+/** Detect whether a blob looks like a v8+ EntrepreneurState. */
+function isEntrepreneurShape(raw: unknown): raw is EntrepreneurState {
+  if (!raw || typeof raw !== "object") return false;
+  const r = raw as { ventures?: unknown; activeVentureId?: unknown };
+  return Array.isArray(r.ventures) && typeof r.activeVentureId === "string";
+}
+
+/** Per-venture migration. SaaS ventures flow through migrateSave(); studio
+ *  ventures are left as-is for now (future-proofed hook). */
+function migrateVenture(v: AnyVentureState): AnyVentureState {
+  if (isStudioVenture(v)) {
+    // No studio migrations yet — schema is fresh at v8.
+    return v;
+  }
+  if (isSaasVenture(v)) {
+    return migrateSave(v);
+  }
+  return v;
+}
+
+/**
+ * Accept either a legacy `GameState` blob or a v8+ `EntrepreneurState` and
+ * return a normalized `EntrepreneurState`. Legacy saves are wrapped as the
+ * sole venture; the founder name is lifted from the SaaS company's founder
+ * for continuity.
+ */
+export function migrateEntrepreneurSave(raw: unknown): EntrepreneurState {
+  if (isEntrepreneurShape(raw)) {
+    // Already new shape — walk each venture through its own migration.
+    const ventures = raw.ventures.map(migrateVenture);
+    // If the active id points at a venture that no longer exists (unlikely but
+    // defensive), fall back to the first venture.
+    const hasActive = ventures.some(v => v.seed === raw.activeVentureId);
+    const activeVentureId = hasActive
+      ? raw.activeVentureId
+      : ventures[0]?.seed ?? "";
+    return {
+      personalWealth: typeof raw.personalWealth === "number" ? raw.personalWealth : 0,
+      founderName: typeof raw.founderName === "string" && raw.founderName.trim().length > 0
+        ? raw.founderName
+        : (ventures[0] && isSaasVenture(ventures[0]) ? ventures[0].company.founderName : "Founder"),
+      week: typeof raw.week === "number" ? raw.week : (ventures[0]?.week ?? 0),
+      ventures,
+      activeVentureId,
+      schemaVersion: ENTREPRENEUR_SCHEMA_VERSION,
+    };
+  }
+
+  // Legacy: a bare GameState. Run it through the SaaS migration chain, then
+  // wrap it as the entrepreneur's sole venture.
+  const legacy = raw as GameState;
+  if (!legacy || typeof legacy !== "object" || typeof legacy.seed !== "string") {
+    // Shouldn't happen on a real save, but don't crash — return an empty
+    // entrepreneur and let the caller route to /new-game.
+    return {
+      personalWealth: 0,
+      founderName: "Founder",
+      week: 0,
+      ventures: [],
+      activeVentureId: "",
+      schemaVersion: ENTREPRENEUR_SCHEMA_VERSION,
+    };
+  }
+  const migrated = migrateSave(legacy);
+  return {
+    personalWealth: 0, // legacy founders had no personal pot separate from the co — seed 0
+    founderName: migrated.company.founderName,
+    week: migrated.week,
+    ventures: [migrated],
+    activeVentureId: migrated.seed,
+    schemaVersion: ENTREPRENEUR_SCHEMA_VERSION,
+  };
+}
+
+// =====================================================================================
+// Public load/save API
+// -------------------------------------------------------------------------------------
+// The store deals in EntrepreneurState now. `loadGame`/`saveGame` are retained
+// as thin aliases so existing call sites (store, tests) don't all need to be
+// renamed in the same refactor — their signatures now return/accept the
+// portfolio wrapper.
+// =====================================================================================
+
+export async function loadEntrepreneur(): Promise<EntrepreneurState | null> {
   if (typeof window === "undefined") return null;
   try {
-    const v = await idbGet<GameState>(KEY);
-    return v ? migrateSave(v) : null;
+    const v = await idbGet<unknown>(KEY);
+    return v ? migrateEntrepreneurSave(v) : null;
   } catch {
     return null;
   }
 }
 
-export async function saveGame(state: GameState | null): Promise<void> {
+export async function saveEntrepreneur(state: EntrepreneurState | null): Promise<void> {
   if (typeof window === "undefined") return;
   try {
     if (state === null) await idbDel(KEY);
@@ -259,14 +358,19 @@ export async function saveGame(state: GameState | null): Promise<void> {
   }
 }
 
-export function exportSaveJSON(state: GameState): string {
+// Legacy aliases — kept so existing imports keep compiling during the transition.
+export const loadGame = loadEntrepreneur;
+export const saveGame = saveEntrepreneur;
+
+export function exportSaveJSON(state: EntrepreneurState): string {
   return JSON.stringify(state, null, 2);
 }
 
-export function importSaveJSON(json: string): GameState {
+export function importSaveJSON(json: string): EntrepreneurState {
   const obj = JSON.parse(json);
-  if (!obj || typeof obj !== "object" || typeof obj.seed !== "string" || typeof obj.week !== "number") {
+  if (!obj || typeof obj !== "object") {
     throw new Error("That doesn't look like a Maverick save file.");
   }
-  return migrateSave(obj as GameState);
+  // Accept both legacy GameState and v8 EntrepreneurState shapes — migrate normalizes.
+  return migrateEntrepreneurSave(obj);
 }

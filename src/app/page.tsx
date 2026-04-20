@@ -1,5 +1,6 @@
 "use client";
 import { useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useGame } from "@/game/store";
 import { HqHeader } from "@/components/HqHeader";
@@ -36,6 +37,19 @@ export default function HQPage() {
       <KpiGrid />
       <MacroStrip />
       <NextMilestone />
+      <Link href="/growth" className="themed-card" style={{
+        display: "grid", gridTemplateColumns: "32px 1fr auto", alignItems: "center", gap: 10,
+        padding: "10px 14px", marginTop: 12, textDecoration: "none",
+      }}>
+        <div style={{ fontSize: 22, lineHeight: 1 }}>🚀</div>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14 }}>Growth hub</div>
+          <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 1 }}>
+            Office · Culture · Campaigns · Support · Regions · Patents · OSS · Partnerships · IPO
+          </div>
+        </div>
+        <span className="mono" style={{ fontSize: 14, color: "var(--color-ink-2)" }}>›</span>
+      </Link>
       <h2 className="sec-head" style={{ marginTop: 18 }}>MRR — last 12 weeks <span className="tag">billing</span></h2>
       <MrrChart />
       <h2 className="sec-head">Your products <span className="tag">{state.products.length}</span></h2>
