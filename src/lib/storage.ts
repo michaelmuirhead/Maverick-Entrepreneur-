@@ -321,7 +321,7 @@ export function migrateEntrepreneurSave(raw: unknown): EntrepreneurState {
   const migrated = migrateSave(legacy);
   return {
     personalWealth: 0, // legacy founders had no personal pot separate from the co — seed 0
-    founderName: migrated.company.founderName,
+    founderName: migrated.employees.find(e => e.role === "founder")?.name ?? "Founder",
     week: migrated.week,
     ventures: [migrated],
     activeVentureId: migrated.seed,
