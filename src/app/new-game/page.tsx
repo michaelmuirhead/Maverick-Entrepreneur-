@@ -3,6 +3,8 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useGame } from "@/game/store";
 import { PRODUCT_CATEGORIES, ProductCategory, RevenueModel } from "@/game/types";
+import { GENRE_INFO, GENRE_ORDER, SCOPE_INFO } from "@/game/studio/genres";
+import type { GameGenre, GameScope } from "@/game/studio/types";
 import { money } from "@/lib/format";
 
 const REVENUE_MODEL_LABEL: Record<RevenueModel, string> = {
@@ -14,6 +16,22 @@ const REVENUE_MODEL_LABEL: Record<RevenueModel, string> = {
 
 type Arch = "technical" | "business" | "design";
 type Cash = "lean" | "bootstrapped" | "angel-backed";
+type Vertical = "saas" | "game-studio";
+
+const VERTICAL_META: Record<Vertical, { label: string; tagline: string; glyph: string; desc: string }> = {
+  "saas": {
+    label: "Software / SaaS",
+    tagline: "Ship subscriptions. Hunt PMF.",
+    glyph: "💾",
+    desc: "Build web/mobile products, close MRR, hire engineers, pitch VCs, and IPO on revenue.",
+  },
+  "game-studio": {
+    label: "Game Studio",
+    tagline: "Ship games. Survive reviews.",
+    glyph: "🎮",
+    desc: "Greenlight titles, manage crunch, court platforms, ride genre waves, and pray for an 80+ Metacritic.",
+  },
+};
 
 const ARCH_META: Record<Arch, { label: string; desc: string; glyph: string }> = {
   technical: { label: "Technical", desc: "You can ship. Your cofounder will have to do sales.", glyph: "🛠️" },
@@ -27,24 +45,45 @@ const CASH_META: Record<Cash, { label: string; amount: number; desc: string }> =
   "angel-backed":{ label: "Angel-backed",  amount: 250_000, desc: "An angel bet big on you. Pre-seed stage unlocked." },
 };
 
+/** Scope blurbs shown on the studio path. */
+const SCOPE_BLURBS: Record<GameScope, string> = {
+  indie: "Small team, fast iteration, scrappy charm.",
+  AA:    "Mid-sized ambition — proper production values.",
+  AAA:   "Blockbuster scale. Big teams, big risks, big launches.",
+};
+
 export default function NewGamePage() {
   const router = useRouter();
-  const start = useGame(s => s.startNewGame);
+  const startSaas = useGame(s => s.startNewGame);
+  const startStudio = useGame(s => s.startNewStudio);
 
+  const [vertical, setVertical] = useState<Vertical>("saas");
+
+  // Shared fields
   const [companyName, setCompanyName] = useState("Maverick Labs");
   const [founderName, setFounderName] = useState("");
   const [arch, setArch] = useState<Arch>("technical");
   const [cash, setCash] = useState<Cash>("bootstrapped");
+
+  // SaaS-specific
   const [cat, setCat] = useState<ProductCategory>("application");
 
+  // Studio-specific
+  const [genre, setGenre] = useState<GameGenre>("rpg");
+  const [scope, setScope] = useState<GameScope>("indie");
+
   const submit = () => {
-    start({
+    const base = {
       companyName: companyName.trim() || "Maverick Labs",
       founderName: founderName.trim() || "You",
       archetype: arch,
       startingCash: cash,
-      startingCategory: cat,
-    });
+    };
+    if (vertical === "saas") {
+      startSaas({ ...base, startingCategory: cat });
+    } else {
+      startStudio({ ...base, signatureGenre: genre, defaultScope: scope });
+    }
     router.replace("/");
   };
 
@@ -52,8 +91,21 @@ export default function NewGamePage() {
     <main className="app-shell" style={{ paddingTop: "calc(24px + var(--safe-top))", paddingBottom: 40 }}>
       <h1 style={{ fontSize: 24, fontWeight: 700, margin: "10px 4px", fontFamily: "var(--font-display)" }}>Start a company</h1>
       <p style={{ color: "var(--color-ink-2)", fontSize: 14, margin: "0 4px 18px" }}>
-        Set up your founder, your stake, and your first product idea. You can adjust everything from Year 1, Week 1.
+        Pick your vertical, set up your founder, and draft your first product. You can found additional companies in different verticals later.
       </p>
+
+      <Section title="Vertical">
+        <Options>
+          {(Object.keys(VERTICAL_META) as Vertical[]).map(k => (
+            <OptionCard key={k} active={vertical === k} onClick={() => setVertical(k)}>
+              <div style={{ fontSize: 22 }}>{VERTICAL_META[k].glyph}</div>
+              <div style={{ fontWeight: 700, fontSize: 15, marginTop: 4 }}>{VERTICAL_META[k].label}</div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "var(--color-accent)", marginTop: 2 }}>{VERTICAL_META[k].tagline}</div>
+              <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 4 }}>{VERTICAL_META[k].desc}</div>
+            </OptionCard>
+          ))}
+        </Options>
+      </Section>
 
       <Section title="Company">
         <Field label="Company name">
@@ -88,19 +140,59 @@ export default function NewGamePage() {
         </Options>
       </Section>
 
-      <Section title="First product category">
-        <Options>
-          {PRODUCT_CATEGORIES.map(c => (
-            <OptionCard key={c.id} active={cat === c.id} onClick={() => setCat(c.id)}>
-              <div style={{ fontWeight: 700, fontSize: 14 }}>{c.label}</div>
-              <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>{c.blurb}</div>
-              <div className="mono" style={{ fontSize: 10, color: "var(--color-ink-2)", marginTop: 6, letterSpacing: ".04em" }}>
-                {REVENUE_MODEL_LABEL[c.revenueModel]} · ~{c.devWeeksBase}w build · min {c.teamSizeMin} eng
-              </div>
-            </OptionCard>
-          ))}
-        </Options>
-      </Section>
+      {vertical === "saas" && (
+        <Section title="First product category">
+          <Options>
+            {PRODUCT_CATEGORIES.map(c => (
+              <OptionCard key={c.id} active={cat === c.id} onClick={() => setCat(c.id)}>
+                <div style={{ fontWeight: 700, fontSize: 14 }}>{c.label}</div>
+                <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>{c.blurb}</div>
+                <div className="mono" style={{ fontSize: 10, color: "var(--color-ink-2)", marginTop: 6, letterSpacing: ".04em" }}>
+                  {REVENUE_MODEL_LABEL[c.revenueModel]} · ~{c.devWeeksBase}w build · min {c.teamSizeMin} eng
+                </div>
+              </OptionCard>
+            ))}
+          </Options>
+        </Section>
+      )}
+
+      {vertical === "game-studio" && (
+        <>
+          <Section title="Signature genre">
+            <Options>
+              {GENRE_ORDER.map(g => {
+                const info = GENRE_INFO[g];
+                return (
+                  <OptionCard key={g} active={genre === g} onClick={() => setGenre(g)}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>{info.label}</div>
+                    <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>{info.blurb}</div>
+                    <div className="mono" style={{ fontSize: 10, color: "var(--color-ink-2)", marginTop: 6, letterSpacing: ".04em" }}>
+                      ~{info.devWeeksBase}w base · min {info.teamSizeMin} eng · reach {info.marketSize.toFixed(1)}×
+                    </div>
+                  </OptionCard>
+                );
+              })}
+            </Options>
+          </Section>
+
+          <Section title="Ambition">
+            <Options>
+              {(Object.keys(SCOPE_INFO) as GameScope[]).map(s => {
+                const info = SCOPE_INFO[s];
+                return (
+                  <OptionCard key={s} active={scope === s} onClick={() => setScope(s)}>
+                    <div style={{ fontWeight: 700, fontSize: 15 }}>{info.label}</div>
+                    <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 4 }}>{SCOPE_BLURBS[s]}</div>
+                    <div className="mono" style={{ fontSize: 10, color: "var(--color-ink-2)", marginTop: 6, letterSpacing: ".04em" }}>
+                      {info.devWeeksMult.toFixed(1)}× time · {info.priceMult.toFixed(1)}× price · min {info.minTeam} team
+                    </div>
+                  </OptionCard>
+                );
+              })}
+            </Options>
+          </Section>
+        </>
+      )}
 
       <button
         onClick={submit}
@@ -111,7 +203,7 @@ export default function NewGamePage() {
           boxShadow: "var(--shadow-card)", marginTop: 20, width: "100%",
         }}
       >
-        Incorporate & begin
+        {vertical === "saas" ? "Incorporate & begin" : "Open the studio"}
       </button>
     </main>
   );

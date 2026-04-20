@@ -26,7 +26,17 @@ import {
 } from "./portfolio";
 import { loadEntrepreneur, saveEntrepreneur } from "@/lib/storage";
 import { money } from "@/lib/format";
-import type { GameStudioState } from "./studio/types";
+import type {
+  GameGenre, GamePlatform, GameScope, GameStudioState,
+} from "./studio/types";
+import { newStudio, NewStudioConfig } from "./studio/init";
+import { addGameToStudio, cancelGame, tickStudio } from "./studio/tick";
+import { makeGame } from "./studio/games";
+import { launchGame } from "./studio/launch";
+import { startCrunch, endCrunch } from "./studio/crunch";
+import { acceptPlatformOffer, respondToReviewBomb } from "./studio/platforms";
+import { queueDlc } from "./studio/live-service";
+import { GENRE_INFO, PLATFORM_INFO } from "./studio/genres";
 import {
   AnyVentureState,
   ENTREPRENEUR_SCHEMA_VERSION,
@@ -63,6 +73,10 @@ interface GameStore {
   // Lifecycle
   hydrate: () => Promise<void>;
   startNewGame: (config: NewGameConfig) => void;
+  /** Start a fresh playthrough with a Game Studio as the first venture.
+   *  Replaces any existing entrepreneur — use `addVenture(newStudio(...))` to
+   *  add a studio to an existing portfolio instead. */
+  startNewStudio: (config: NewStudioConfig) => void;
   /** Switch the currently-displayed venture. No-op if the id doesn't match. */
   switchVenture: (ventureId: string) => void;
   /** Add a brand-new venture into the portfolio (any kind) and make it active.
@@ -172,6 +186,52 @@ interface GameStore {
   /** Advance to the next IPO stage. Caller is responsible for checking eligibility
    *  and dwell time first; this just refuses to advance if they haven't. */
   advanceIpo: () => void;
+
+  // ==========================================================================
+  // Studio actions — only meaningful when the active venture is a Game Studio.
+  // Each studio action no-ops if the active venture isn't a studio.
+  // ==========================================================================
+  /** Greenlight a new game in the active studio. Title will be auto-filled if
+   *  blank. Returns the new game's id, or null if the action was refused. */
+  createStudioGame: (params: {
+    title: string;
+    genre: GameGenre;
+    scope: GameScope;
+    platforms: GamePlatform[];
+    devBudget?: number;
+  }) => string | null;
+  /** Assign an engineer to a game. Also unassigns them from any other game they
+   *  were on, so engineers are never double-booked at the model layer. */
+  assignGameEngineer: (gameId: string, employeeId: string) => void;
+  unassignGameEngineer: (gameId: string, employeeId: string) => void;
+  setGameDevBudget: (gameId: string, budget: number) => void;
+  setGameMarketingBudget: (gameId: string, budget: number) => void;
+  /** Flip the crunch flag on a game. UI should warn on the ethics before calling. */
+  toggleGameCrunch: (gameId: string) => void;
+  /** Set or clear the planned launch week for a game. Required once in polish. */
+  setGamePlannedLaunchWeek: (gameId: string, week: number | null) => void;
+  /** Ship a game right now — forces it through launch regardless of stage. Use
+   *  when the player hits "Launch" manually rather than waiting for the tick. */
+  shipGameNow: (gameId: string) => void;
+  /** Cancel an in-flight game. Archives the project and emits a sunset event. */
+  cancelStudioGame: (gameId: string) => void;
+  /** Accept an open platform deal offer. Credits the upfront payment and
+   *  attaches exclusivity to the target game. */
+  acceptStudioPlatformOffer: (offerId: string) => void;
+  /** Decline an open platform deal offer. Removes it from the pool. */
+  declineStudioPlatformOffer: (offerId: string) => void;
+  /** Queue a new DLC pack for a launched game. */
+  queueStudioDlc: (gameId: string, params: {
+    name: string;
+    costMult: number;
+    plannedWeek: number;
+    salesSpike?: number;
+  }) => void;
+  /** Respond to an active review bomb on a game with a PR intervention. */
+  respondToStudioReviewBomb: (
+    gameId: string,
+    quality: "apology" | "compensation" | "rollback",
+  ) => void;
 }
 
 /** Derive the `state` / `activeStudioVenture` projection from an
@@ -189,13 +249,34 @@ function projectActive(e: EntrepreneurState | null): {
   return { state: active as GameState, activeStudioVenture: null };
 }
 
+/** Pull the entrepreneur's display name off a venture. Both SaaS and Studio
+ *  verticals store the founder as `employees[0]` at creation time, so this
+ *  works across verticals. Falls back to the company name if no founder found. */
+function founderDisplayName(v: AnyVentureState): string {
+  const founder = v.employees.find(e => e.role === "founder");
+  return founder?.name ?? v.company.name;
+}
+
 /** Wrap a freshly-created SaaS `GameState` in a brand-new entrepreneur. Used
  *  from `startNewGame` so first-time SaaS founders pick up the portfolio
  *  wrapper automatically. */
 function freshEntrepreneurFromSaas(s: GameState): EntrepreneurState {
   return {
     personalWealth: 0,
-    founderName: s.company.founderName,
+    founderName: founderDisplayName(s),
+    week: s.week,
+    ventures: [s],
+    activeVentureId: s.seed,
+    schemaVersion: ENTREPRENEUR_SCHEMA_VERSION,
+  };
+}
+
+/** Wrap a freshly-created studio in a brand-new entrepreneur. Symmetric to
+ *  `freshEntrepreneurFromSaas` — the player's first venture is a studio. */
+function freshEntrepreneurFromStudio(s: GameStudioState): EntrepreneurState {
+  return {
+    personalWealth: 0,
+    founderName: founderDisplayName(s),
     week: s.week,
     ventures: [s],
     activeVentureId: s.seed,
@@ -222,6 +303,14 @@ export const useGame = create<GameStore>((set, get) => ({
   startNewGame: (config) => {
     const s = newGame(config);
     const e = freshEntrepreneurFromSaas(s);
+    const projection = projectActive(e);
+    set({ entrepreneur: e, ...projection });
+    void saveEntrepreneur(e);
+  },
+
+  startNewStudio: (config) => {
+    const s = newStudio(config);
+    const e = freshEntrepreneurFromStudio(s);
     const projection = projectActive(e);
     set({ entrepreneur: e, ...projection });
     void saveEntrepreneur(e);
@@ -276,16 +365,14 @@ export const useGame = create<GameStore>((set, get) => ({
     if (!cur) return;
     const active = getActiveVenture(cur);
     if (!active) return;
-    // SaaS: advanceWeek applies to the SaaS slot. Studio: deferred until the
-    // studio tick engine lands (task #42). For now, a studio-only save
-    // advances the wall-clock week but does nothing else.
+    // SaaS and Studio each have their own tick engines. The store routes based
+    // on the active venture kind; multi-venture-parallel ticking is a future
+    // enhancement (each venture would tick independently once per week).
     let tickedVenture: AnyVentureState = active;
     if (isSaasVenture(active)) {
       tickedVenture = advanceWeek(active);
     } else if (isStudioVenture(active)) {
-      // Placeholder until studio tick exists — just bump the week counter so
-      // the UI doesn't appear frozen while we're building the engine.
-      tickedVenture = { ...active, week: active.week + 1 };
+      tickedVenture = tickStudio(active);
     }
     const nextE: EntrepreneurState = {
       ...replaceVenture(cur, tickedVenture),
@@ -817,7 +904,263 @@ export const useGame = create<GameStore>((set, get) => ({
     update(set, get, (cur) => ({ ...cur, events: [pitchEvent, ...cur.events] }));
     return outcome;
   },
+
+  // ==========================================================================
+  // Studio actions
+  // ==========================================================================
+  createStudioGame: (params) => {
+    const cur = get().activeStudioVenture;
+    if (!cur) return null;
+    // Derive the new game id from a seed-scoped RNG so the same save always
+    // produces the same ids on replay. Includes project count so back-to-back
+    // creations don't collide.
+    const projCount = cur.games.length + cur.archivedGames.length;
+    const rng = makeRng(`${cur.seed}:g${projCount}`);
+    const newId = makeIdGen(rng);
+    const id = newId("g");
+    const title = params.title.trim() || generateGameTitle(params.genre, rng);
+    const platforms = params.platforms.length > 0 ? params.platforms : ["pc-steam"];
+    const g = makeGame({
+      id,
+      title,
+      genre: params.genre,
+      scope: params.scope,
+      platforms: platforms as GamePlatform[],
+      startedWeek: cur.week,
+      devBudget: params.devBudget,
+    });
+    studioUpdate(set, get, (s) => {
+      const next = addGameToStudio(s, g);
+      return {
+        ...next,
+        events: [
+          {
+            id: `ev_${s.week}_greenlight_${id}`,
+            week: s.week,
+            severity: "good" as const,
+            message: `Greenlit ${title} — ${g.scope} ${g.genre}. Target: ${g.targetDevWeeks} weeks, min ${g.assignedEngineers.length} engineers assigned so far.`,
+          },
+          ...next.events,
+        ],
+      };
+    });
+    return id;
+  },
+
+  assignGameEngineer: (gameId, employeeId) => studioUpdate(set, get, (s) => ({
+    ...s,
+    employees: s.employees.map(e =>
+      e.id === employeeId ? { ...e, assignedProductId: gameId } : e,
+    ),
+    games: s.games.map(g =>
+      g.id === gameId
+        ? { ...g, assignedEngineers: Array.from(new Set([...g.assignedEngineers, employeeId])) }
+        : { ...g, assignedEngineers: g.assignedEngineers.filter(x => x !== employeeId) },
+    ),
+  })),
+
+  unassignGameEngineer: (gameId, employeeId) => studioUpdate(set, get, (s) => ({
+    ...s,
+    employees: s.employees.map(e =>
+      e.id === employeeId ? { ...e, assignedProductId: undefined } : e,
+    ),
+    games: s.games.map(g =>
+      g.id === gameId
+        ? { ...g, assignedEngineers: g.assignedEngineers.filter(x => x !== employeeId) }
+        : g,
+    ),
+  })),
+
+  setGameDevBudget: (gameId, budget) => studioUpdate(set, get, (s) => ({
+    ...s,
+    games: s.games.map(g =>
+      g.id === gameId ? { ...g, devBudget: Math.max(0, Math.round(budget)) } : g,
+    ),
+  })),
+
+  setGameMarketingBudget: (gameId, budget) => studioUpdate(set, get, (s) => ({
+    ...s,
+    games: s.games.map(g =>
+      g.id === gameId ? { ...g, marketingBudget: Math.max(0, Math.round(budget)) } : g,
+    ),
+  })),
+
+  toggleGameCrunch: (gameId) => studioUpdate(set, get, (s) => {
+    const g = s.games.find(x => x.id === gameId);
+    if (!g) return s;
+    const next = g.crunchActive ? endCrunch(g) : startCrunch(g);
+    if (next === g) return s;
+    return {
+      ...s,
+      games: s.games.map(x => x.id === gameId ? next : x),
+      events: [
+        {
+          id: `ev_${s.week}_crunch_${next.crunchActive ? "on" : "off"}_${gameId}`,
+          week: s.week,
+          severity: next.crunchActive ? "warn" as const : "info" as const,
+          message: next.crunchActive
+            ? `Crunch started on ${g.title}. +40% velocity, +25% burn, attrition risk climbs after week 8.`
+            : `Crunch ended on ${g.title}. Team can breathe again.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  setGamePlannedLaunchWeek: (gameId, week) => studioUpdate(set, get, (s) => ({
+    ...s,
+    games: s.games.map(g =>
+      g.id === gameId
+        ? { ...g, plannedLaunchWeek: week == null ? undefined : Math.max(s.week, Math.round(week)) }
+        : g,
+    ),
+  })),
+
+  shipGameNow: (gameId) => studioUpdate(set, get, (s) => {
+    const g = s.games.find(x => x.id === gameId);
+    if (!g) return s;
+    // Only ship pre-release games. Post-release games have already shipped.
+    if (g.stage === "released" || g.stage === "live-service"
+        || g.stage === "mature" || g.stage === "sunset") return s;
+    const rng = makeRng(`${s.seed}:launch:${gameId}:${s.week}`);
+    const result = launchGame(g, s.week, rng);
+    return {
+      ...s,
+      games: s.games.map(x => x.id === gameId ? result.game : x),
+      finance: {
+        ...s.finance,
+        cash: s.finance.cash + result.netCashToStudio,
+      },
+      events: [
+        {
+          id: `ev_${s.week}_launch_${gameId}`,
+          week: s.week,
+          severity: (result.reviewScore >= 75 ? "good" as const : result.reviewScore >= 55 ? "info" as const : "warn" as const),
+          message: `${g.title} shipped. Review score ${result.reviewScore}/100. First week: ${result.firstWeekSales.toLocaleString()} units at $${result.listPrice} → ${money(result.netCashToStudio, { short: true })} to the studio.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  cancelStudioGame: (gameId) => studioUpdate(set, get, (s) => {
+    const next = cancelGame(s, gameId);
+    if (next === s) return s;
+    // Release any engineers from this cancelled game so they aren't left
+    // assignedProductId-ing to a game that no longer exists.
+    return {
+      ...next,
+      employees: next.employees.map(e =>
+        e.assignedProductId === gameId ? { ...e, assignedProductId: undefined } : e,
+      ),
+    };
+  }),
+
+  acceptStudioPlatformOffer: (offerId) => studioUpdate(set, get, (s) => {
+    const offer = s.platformOffers.find(o => o.id === offerId);
+    if (!offer) return s;
+    const target = s.games.find(g => g.id === offer.targetGameId);
+    if (!target) return { ...s, platformOffers: s.platformOffers.filter(o => o.id !== offerId) };
+    const updatedGame = acceptPlatformOffer(target, offer, s.week);
+    return {
+      ...s,
+      games: s.games.map(g => g.id === target.id ? updatedGame : g),
+      finance: { ...s.finance, cash: s.finance.cash + offer.upfrontPayment },
+      platformOffers: s.platformOffers.filter(o => o.id !== offerId),
+      events: [
+        {
+          id: `ev_${s.week}_platform_accept_${offerId}`,
+          week: s.week,
+          severity: "good" as const,
+          message: `Signed ${PLATFORM_INFO[offer.platform].label} deal for ${target.title}. ${money(offer.upfrontPayment, { short: true })} upfront, ${offer.marketingBoost.toFixed(1)}× marketing boost${offer.fullExclusivity ? ", full exclusivity" : offer.timedWeeks ? `, ${offer.timedWeeks}-week timed exclusivity` : ""}.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  declineStudioPlatformOffer: (offerId) => studioUpdate(set, get, (s) => {
+    const offer = s.platformOffers.find(o => o.id === offerId);
+    if (!offer) return s;
+    const target = s.games.find(g => g.id === offer.targetGameId);
+    return {
+      ...s,
+      platformOffers: s.platformOffers.filter(o => o.id !== offerId),
+      events: [
+        {
+          id: `ev_${s.week}_platform_decline_${offerId}`,
+          week: s.week,
+          severity: "info" as const,
+          message: `Passed on the ${PLATFORM_INFO[offer.platform].label} deal${target ? ` for ${target.title}` : ""}.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  queueStudioDlc: (gameId, params) => studioUpdate(set, get, (s) => {
+    const g = s.games.find(x => x.id === gameId);
+    if (!g) return s;
+    const projCount = g.dlcPipeline.length;
+    const rng = makeRng(`${s.seed}:dlc:${gameId}:${projCount}`);
+    const newId = makeIdGen(rng);
+    const id = newId("dlc");
+    const updated = queueDlc(g, {
+      id,
+      name: params.name.trim() || "Untitled DLC",
+      costMult: params.costMult,
+      plannedWeek: Math.max(s.week + 1, Math.round(params.plannedWeek)),
+      salesSpike: params.salesSpike,
+    });
+    if (updated === g) return s;
+    return {
+      ...s,
+      games: s.games.map(x => x.id === gameId ? updated : x),
+      events: [
+        {
+          id: `ev_${s.week}_dlc_queue_${id}`,
+          week: s.week,
+          severity: "info" as const,
+          message: `Queued "${params.name.trim() || "Untitled DLC"}" for ${g.title}. ~${Math.round(params.costMult * 100)}% of base-game dev cost.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  respondToStudioReviewBomb: (gameId, quality) => studioUpdate(set, get, (s) => {
+    const g = s.games.find(x => x.id === gameId);
+    if (!g || !g.reviewBomb) return s;
+    const { cost, newBomb } = respondToReviewBomb(g.reviewBomb, quality);
+    if (s.finance.cash < cost) return s;
+    return {
+      ...s,
+      finance: { ...s.finance, cash: s.finance.cash - cost },
+      games: s.games.map(x => x.id === gameId ? { ...x, reviewBomb: newBomb } : x),
+      events: [
+        {
+          id: `ev_${s.week}_bomb_response_${gameId}_${quality}`,
+          week: s.week,
+          severity: (newBomb ? "info" as const : "good" as const),
+          message: newBomb
+            ? `Issued ${quality} for ${g.title} — ${money(cost, { short: true })} spent. Severity dropping; not yet cleared.`
+            : `Issued ${quality} for ${g.title} — ${money(cost, { short: true })} spent. Controversy cleared.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
 }));
+
+/** Lightweight auto-title generator when the player leaves the title blank.
+ *  Picks a suffix from the genre's preferred vocabulary and pairs it with a
+ *  short evocative prefix so the game doesn't ship as "Untitled". */
+function generateGameTitle(genre: GameGenre, rng: { pick<T>(arr: readonly T[]): T }): string {
+  const PREFIXES = ["Crimson", "Silent", "Broken", "Iron", "Hollow", "Last", "Neon", "Ember", "Stormwake", "Verdant"];
+  const prefix = rng.pick(PREFIXES);
+  const suffix = rng.pick(GENRE_INFO[genre].nameSuffixes);
+  return `${prefix} ${suffix}`;
+}
 
 /**
  * SaaS mutation helper. Resolves the active SaaS venture, applies `fn`, stitches
@@ -834,6 +1177,29 @@ function update(
   if (!cur) return;
   const active = getActiveVenture(cur);
   if (!active || !isSaasVenture(active)) return;
+  const next = fn(active);
+  if (next === active) return;
+  const nextE = replaceVenture(cur, next);
+  const projection = projectActive(nextE);
+  set({ entrepreneur: nextE, ...projection });
+  void saveEntrepreneur(nextE);
+}
+
+/**
+ * Studio mutation helper — symmetric to `update`, but scoped to Game Studio
+ * ventures. Resolves the active studio, applies `fn`, stitches the updated
+ * venture back into the entrepreneur portfolio, and persists. No-ops if the
+ * active venture isn't a studio (SaaS actions have their own `update` path).
+ */
+function studioUpdate(
+  set: (partial: Partial<GameStore>) => void,
+  get: () => GameStore,
+  fn: (s: GameStudioState) => GameStudioState,
+) {
+  const cur = get().entrepreneur;
+  if (!cur) return;
+  const active = getActiveVenture(cur);
+  if (!active || !isStudioVenture(active)) return;
   const next = fn(active);
   if (next === active) return;
   const nextE = replaceVenture(cur, next);

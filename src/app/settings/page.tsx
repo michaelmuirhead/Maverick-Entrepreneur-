@@ -5,11 +5,11 @@ import { useGame } from "@/game/store";
 import { TabBar } from "@/components/TabBar";
 import { useTheme } from "@/components/ThemeProvider";
 import { exportSaveJSON, importSaveJSON } from "@/lib/storage";
-import type { GameState } from "@/game/types";
-import { SCHEMA_VERSION } from "@/game/types";
+import { ENTREPRENEUR_SCHEMA_VERSION } from "@/game/entrepreneur";
 
 export default function SettingsPage() {
   const router = useRouter();
+  const entrepreneur = useGame(s => s.entrepreneur);
   const state = useGame(s => s.state);
   const hydrate = useGame(s => s.hydrate);
   const hydrated = useGame(s => s.hydrated);
@@ -24,14 +24,14 @@ export default function SettingsPage() {
   useEffect(() => { if (!hydrated) void hydrate(); }, [hydrated, hydrate]);
 
   const doExport = () => {
-    if (!state) return;
-    const json = exportSaveJSON(state);
+    if (!entrepreneur) return;
+    const json = exportSaveJSON(entrepreneur);
     const blob = new Blob([json], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    const safeName = (state.company.name || "maverick").replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
+    const safeName = (entrepreneur.founderName || "maverick").replace(/[^a-z0-9-]+/gi, "-").toLowerCase();
     a.href = url;
-    a.download = `${safeName}-w${state.week}-save.json`;
+    a.download = `${safeName}-w${entrepreneur.week}-save.json`;
     a.click();
     URL.revokeObjectURL(url);
     setFlash({ kind: "good", msg: "Save exported. Keep it somewhere safe." });
@@ -40,13 +40,17 @@ export default function SettingsPage() {
   const doImportFile = async (file: File) => {
     try {
       const text = await file.text();
-      const parsed: GameState = importSaveJSON(text);
-      if (parsed.schemaVersion !== SCHEMA_VERSION) {
-        setFlash({ kind: "bad", msg: `Save is from schema v${parsed.schemaVersion}, game expects v${SCHEMA_VERSION}. Not loading.` });
+      const parsed = importSaveJSON(text);
+      if (parsed.schemaVersion !== ENTREPRENEUR_SCHEMA_VERSION) {
+        setFlash({ kind: "bad", msg: `Save is from schema v${parsed.schemaVersion}, game expects v${ENTREPRENEUR_SCHEMA_VERSION}. Not loading.` });
         return;
       }
       loadExternal(parsed);
-      setFlash({ kind: "good", msg: `Loaded ${parsed.company.name} at week ${parsed.week}.` });
+      const ventureCount = parsed.ventures.length;
+      setFlash({
+        kind: "good",
+        msg: `Loaded ${parsed.founderName}'s portfolio — ${ventureCount} venture${ventureCount === 1 ? "" : "s"} at week ${parsed.week}.`,
+      });
     } catch (e) {
       setFlash({ kind: "bad", msg: e instanceof Error ? e.message : "Could not read that file." });
     }
@@ -170,7 +174,7 @@ export default function SettingsPage() {
       <div className="themed-card" style={{ padding: 14 }}>
         <div style={{ fontWeight: 700, fontSize: 15 }}>Maverick Entrepreneur</div>
         <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 4 }}>
-          Schema v{SCHEMA_VERSION} · Playfully serious since 2026
+          Schema v{ENTREPRENEUR_SCHEMA_VERSION} · Playfully serious since 2026
         </div>
       </div>
 
