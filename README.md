@@ -1,6 +1,6 @@
 # Maverick Entrepreneur
 
-A deep tycoon simulation about starting and running a small software company. Deploy a product, watch it grow, then replace it before it obsoletes itself.
+A deep tycoon simulation about building a career as a founder. Start a SaaS company or run a game studio, ship products, cash out, then start something new. Ventures live inside a single entrepreneur profile so successful founders carry their money, reputation, and scars across the portfolio.
 
 Built as a mobile-web PWA with Next.js. Runs great on iPhone Safari; installable to the home screen.
 
@@ -10,7 +10,7 @@ Built as a mobile-web PWA with Next.js. Runs great on iPhone Safari; installable
 - **Zustand** for game state (single store, pure reducers)
 - **idb-keyval** for IndexedDB save games
 - **seedrandom** for deterministic reproducible runs
-- **Vitest** for unit tests on the tick engine
+- **Vitest** for unit tests on the tick engines
 - Two themes via CSS tokens: **Cartoonish+Dashboard** (default) and **Pixel+Dashboard** (alt)
 
 ## Running locally
@@ -57,35 +57,65 @@ git push -u origin main
 
 Every future `git push` triggers an auto-deploy.
 
+## The two verticals
+
+Ventures come in two flavors. Both live under the same entrepreneur profile, so cash, reputation, and exit proceeds compound across a career.
+
+**SaaS company** (`/`). Pick a category, design products, price them, scale the customer segments they target. Juggle technical debt, marketing campaigns, customer support, office space, company culture, regional expansion, patents, open source positioning, partnerships, and government contracts. Fundraise through friends-and-family, seed, A, B, C — or skip the investor path and stay lean. Eventually IPO or get acquired.
+
+**Game studio** (`/studio`). Greenlight games across scopes (prototype, indie, AA, AAA), pick genres that ride shifting trend waves, staff them with engineers and designers, ship to platforms, survive review scores and review bombs, run live-service titles and DLC, then keep reinvesting. Take on work-for-hire contracts (consulting, port, co-dev, publisher-spec) when you need cash, but watch your reputation — missing deadlines closes doors on the bigger work.
+
+A tier system (lean / bootstrapped / angel-backed / VC-backed) shapes both verticals' constraints: lean studios can only run one project at a time, VC-backed companies face board deadlines and pressure to exit.
+
 ## Project layout
 
 ```
 src/
-  app/               # Next.js app router pages
-    page.tsx           #  HQ (dashboard)
-    products/          #  Products — portfolio, design flow, assignments
-    team/              #  Team — roster + hire
-    market/            #  Market — trends, demand, competitors
-    finance/           #  Finance — cash, runway, fundraising
-    settings/          #  Settings — theme, save export/import, reset
-    new-game/          #  Player-customized start
-  components/        # Reusable UI: TabBar, KpiGrid, MrrChart, ThemeSwitcher, etc.
-  game/              # Domain model, store, tick engine, systems
-    types.ts         #  Core TypeScript types + SCHEMA_VERSION
-    store.ts         #  Zustand store + actions
-    tick.ts          #  advanceWeek() — the heart of the simulation
-    products.ts      #  Product lifecycle (concept → dev → launch → mature → declining → EOL)
-    team.ts          #  Hiring, morale, attrition
-    finance.ts       #  Revenue, burn, runway, fundraising offers
-    market.ts        #  Market trends, tech shifts
-    competitors.ts   #  AI competitor companies
-    events.ts        #  Random flavor event system
-    init.ts          #  New-game initialization
-    rng.ts           #  Seeded RNG wrapper (reproducible runs)
-  themes/            # CSS token files per theme (cartoonish.css, pixel.css)
-  lib/               # storage (IndexedDB + JSON export/import), formatting helpers
-tests/               # Vitest unit tests — tick engine, RNG determinism, product lifecycle
-public/              # PWA manifest + icons
+  app/                       # Next.js app router
+    page.tsx                 #  SaaS HQ (dashboard)
+    new-game/                #  Pick vertical + tier + starting config
+    portfolio/               #  All ventures across this entrepreneur profile
+    settings/                #  Theme, save export/import, reset
+    products/ team/ market/ finance/ growth/
+    campaigns/ support/ culture/ office/
+    regions/ patents/ oss/ partnerships/
+    gov-contracts/ ipo/                   # SaaS sub-systems
+    studio/                  # Game studio vertical
+      page.tsx               #   Studio HQ
+      games/                 #   Slate + per-game detail
+      contracts/             #   Work-for-hire offers, active, history
+  components/                # Reusable UI — HQ headers, KPI grids,
+                             # tab bars, theme switcher, venture switcher,
+                             # product/game lists, event logs, chart cards
+  game/                      # Domain model
+    types.ts                 #  SaaS core types + SCHEMA_VERSION (venture shape)
+    store.ts                 #  Zustand store + actions (both verticals)
+    tick.ts                  #  SaaS advanceWeek()
+    entrepreneur.ts          #  Portfolio wrapper + ENTREPRENEUR_SCHEMA_VERSION
+    portfolio.ts             #  Venture switching, exit payouts
+    init.ts                  #  New-game initialization (both verticals)
+    rng.ts                   #  Seeded RNG wrapper (reproducible runs)
+    products.ts segments.ts categories.ts roles.ts team.ts finance.ts
+    market.ts competitors.ts events.ts mergers.ts milestones.ts
+    economy.ts campaigns.ts support.ts culture.ts office.ts debt.ts
+    archive.ts                                     # SaaS systems
+    studio/                  # Game studio systems
+      types.ts               #   Game + ArchivedGame + StudioContract
+      tick.ts                #   advanceStudioWeek()
+      games.ts               #   Create/cancel/advance dev lifecycle
+      hype.ts launch.ts      #   Pre-launch wishlist + launch sales curve
+      live-service.ts        #   Live-ops MAU + ARPDAU + DLC pipeline
+      crunch.ts              #   Parallel-project + crunch mechanics
+      platforms.ts           #   Platform deals, revshare, trend drift
+      genres.ts              #   Genre taxonomy + trend curves
+      contracts.ts           #   Work-for-hire offers + lifecycle + reputation
+      init.ts                #   Studio new-game bootstrap
+  themes/                    # CSS token files per theme
+  lib/                       # storage (IndexedDB + JSON), format helpers
+tests/                       # Vitest unit tests — both tick engines,
+                             # RNG determinism, product + game lifecycles,
+                             # schema migration, finance math, archive math
+public/                      # PWA manifest + icons
 ```
 
 ## Save games
@@ -96,15 +126,16 @@ Saves auto-persist to IndexedDB under the key `maverick.save.v1` every tick and 
 - Import a previously exported save
 - Reset and start over (with a confirm step)
 
-The `schemaVersion` field lets us migrate saves in future releases.
+Two schema versions live side-by-side: `ENTREPRENEUR_SCHEMA_VERSION` (the portfolio wrapper — profile + ventures) and `SCHEMA_VERSION` (the legacy inner SaaS-venture shape). Old saves migrate forward automatically; the migration path is covered by `tests/migration-v8.test.ts`.
 
 ## Design principles
 
-1. **Pure tick engine.** `advanceWeek(state) -> newState` is a pure function. No `Date.now()`, no `Math.random()`, no DOM. Trivially testable.
-2. **Per-tick RNG.** Each week's randomness is derived from `makeRng(`${seed}:w${week+1}`)`, so any state replays identically from its seed.
+1. **Pure tick engines.** `advanceWeek(state) -> newState` for SaaS and `advanceStudioWeek(state) -> newState` for the studio are pure functions. No `Date.now()`, no `Math.random()`, no DOM. Trivially testable.
+2. **Per-tick RNG.** Each week's randomness is derived from `makeRng(`${seed}:w${week+1}`)`, so any state replays identically from its seed. Studio uses the same pattern.
 3. **Themes are pure CSS.** No component knows which theme is active; components reference CSS variables (`var(--color-accent)` etc.). Swapping `data-theme` on the root element re-skins the whole app.
 4. **Player-controlled time.** Nothing happens until the player taps **Advance Week**. Every tick produces a digest of events for the log.
-5. **Voice: playfully serious.** Real business vocabulary, dry wit. Copy lives alongside the logic that produces it (see `src/game/products.ts#launchFlavor`, `src/game/events.ts` RANDOM_EVENTS pool, etc.).
+5. **Voice: playfully serious.** Real business vocabulary, dry wit. Copy lives alongside the logic that produces it (see `src/game/products.ts#launchFlavor`, the `RANDOM_EVENTS` pools, the studio contract flavor text in `src/game/studio/contracts.ts`, etc.).
+6. **Backward-compatible state.** New systems land as optional fields with defaulted reads, so legacy saves don't crash when the schema grows. Migrations only happen at hard schema bumps.
 
 ## Tests
 
@@ -113,4 +144,4 @@ npm test                # run once
 npm run test:watch      # TDD loop
 ```
 
-Coverage today: 29 tests across `tests/tick.test.ts` and `tests/rng.test.ts` — determinism, purity, finance math, bankruptcy flag, product lifecycle transitions, RNG reproducibility.
+Coverage spans both verticals: SaaS tick determinism and finance math, product lifecycle transitions, segment/category economics, campaign and support systems, office/culture upgrades, archive post-mortems, buyout-offer valuations, milestone triggers, and schema-v8 migration safety — plus the studio side's dev lifecycle, hype and launch curves, crunch mechanics, and tick-level orchestration.
