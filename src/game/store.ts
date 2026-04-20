@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import { Employee, GameState, Product, ProductCategory } from "./types";
+import { Employee, GameState, OfferTier, Product, ProductCategory } from "./types";
 import { newGame, NewGameConfig, suggestProductName } from "./init";
 import { advanceWeek } from "./tick";
 import { makeIdGen, makeRng } from "./rng";
@@ -9,8 +9,10 @@ import { applyFundingRound, fundingOffer, pitchForFunding, PitchOutcome } from "
 import { counterOfferCost, retentionBonusCost, salaryFor } from "./team";
 import { startNextVersion, canStartNextVersion } from "./products";
 import { ZERO_USERS, derivePricing } from "./segments";
+import { revenueModelFor } from "./categories";
 import { buildArchiveEntry } from "./archive";
 import { isRefactorActive, refactorWeeklyCost } from "./debt";
+import { applyPlayerAcquisition } from "./mergers";
 import { teamEffects } from "./roles";
 import { loadGame, saveGame } from "@/lib/storage";
 import { money } from "@/lib/format";
@@ -45,6 +47,13 @@ interface GameStore {
   startRefactorSprint: (id: string, weeks: number) => void;
   /** Cut the sprint short. Debt paydown stops; velocity returns to normal next tick. */
   cancelRefactorSprint: (id: string) => void;
+
+  /**
+   * Make an acquisition bid on a competitor at a given tier (lowball / fair / premium).
+   * If the target accepts, cash is deducted and an absorbed Product is added to the
+   * player's portfolio. If they reject, a 6-week cooldown is set.
+   */
+  attemptAcquisition: (competitorId: string, tier: OfferTier) => void;
 
   // Team actions
   hireCandidate: (candidate: Employee) => void;
@@ -139,7 +148,9 @@ export const useGame = create<GameStore>((set, get) => ({
       health: 85,
       quality: 60,
       users: { ...ZERO_USERS },
+      lastWeekUserTotal: 0,
       pricing: derivePricing(pricePerUser),
+      revenueModel: revenueModelFor(category),
       devProgress: 0,
       devBudget: 0,
       marketingBudget: 0,
@@ -245,6 +256,10 @@ export const useGame = create<GameStore>((set, get) => ({
       ],
     };
   }),
+
+  attemptAcquisition: (competitorId, tier) => update(set, get, (s) =>
+    applyPlayerAcquisition(s, competitorId, tier)
+  ),
 
   hireCandidate: (c) => update(set, get, (s) => {
     const salary = c.salary || salaryFor(c.role, c.level);

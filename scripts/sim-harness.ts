@@ -151,7 +151,7 @@ function runOnce(strategy: Strategy, difficulty: Difficulty, seed: string): RunR
     founderName: "Sim Founder",
     archetype: "technical",
     startingCash: difficulty,
-    startingCategory: "productivity",
+    startingCategory: "application",
     seed,
   };
 

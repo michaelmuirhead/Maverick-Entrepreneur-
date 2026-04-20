@@ -13,14 +13,15 @@ function base(): GameState {
     founderName: "Archive Tester",
     archetype: "technical",
     startingCash: "bootstrapped",
-    startingCategory: "productivity",
+    startingCategory: "application",
     seed: "archive-test",
   });
 }
 
 function live(overrides: Partial<Product> = {}): Product {
   return {
-    id: "p_arch", name: "Archie", category: "productivity",
+    id: "p_arch", name: "Archie", category: "application",
+    revenueModel: "freemium",
     stage: "launched", version: "1.2",
     health: 70, quality: 70,
     users: { enterprise: 5, smb: 40, selfServe: 150 },

@@ -2,8 +2,15 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useGame } from "@/game/store";
-import { PRODUCT_CATEGORIES, ProductCategory } from "@/game/types";
+import { PRODUCT_CATEGORIES, ProductCategory, RevenueModel } from "@/game/types";
 import { money } from "@/lib/format";
+
+const REVENUE_MODEL_LABEL: Record<RevenueModel, string> = {
+  subscription: "Subscription",
+  "one-time":   "One-time",
+  contract:     "Contract",
+  freemium:     "Freemium",
+};
 
 type Arch = "technical" | "business" | "design";
 type Cash = "lean" | "bootstrapped" | "angel-backed";
@@ -28,7 +35,7 @@ export default function NewGamePage() {
   const [founderName, setFounderName] = useState("");
   const [arch, setArch] = useState<Arch>("technical");
   const [cash, setCash] = useState<Cash>("bootstrapped");
-  const [cat, setCat] = useState<ProductCategory>("productivity");
+  const [cat, setCat] = useState<ProductCategory>("application");
 
   const submit = () => {
     start({
@@ -87,6 +94,9 @@ export default function NewGamePage() {
             <OptionCard key={c.id} active={cat === c.id} onClick={() => setCat(c.id)}>
               <div style={{ fontWeight: 700, fontSize: 14 }}>{c.label}</div>
               <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>{c.blurb}</div>
+              <div className="mono" style={{ fontSize: 10, color: "var(--color-ink-2)", marginTop: 6, letterSpacing: ".04em" }}>
+                {REVENUE_MODEL_LABEL[c.revenueModel]} · ~{c.devWeeksBase}w build · min {c.teamSizeMin} eng
+              </div>
             </OptionCard>
           ))}
         </Options>

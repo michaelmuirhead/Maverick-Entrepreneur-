@@ -3,6 +3,18 @@ import {
 } from "./types";
 import { makeIdGen, makeRng, RNG } from "./rng";
 import { ZERO_USERS, derivePricing } from "./segments";
+import { hydrateLifecycle } from "./mergers";
+import {
+  CATEGORY_INFO,
+  defaultPriceFor,
+  nameSuffixesFor,
+  revenueModelFor,
+} from "./categories";
+import { initEconomy } from "./economy";
+import { initOffice } from "./office";
+import { initCulture } from "./culture";
+import { initSupport } from "./support";
+import { initRegions, initIpo } from "./portfolio";
 
 // Name pools for procedural generation
 const FIRST_NAMES = [
@@ -89,12 +101,13 @@ export function newGame(config: NewGameConfig): GameState {
     id: newId("p"),
     name: firstProductName,
     category: config.startingCategory,
+    revenueModel: revenueModelFor(config.startingCategory),
     stage: "concept",
     version: "0.1",
     health: 80,
     quality: 60,
     users: { ...ZERO_USERS },
-    pricing: derivePricing(defaultPrice(config.startingCategory)),
+    pricing: derivePricing(defaultPriceFor(config.startingCategory)),
     devProgress: 0,
     devBudget: 0,
     marketingBudget: 0,
@@ -109,14 +122,17 @@ export function newGame(config: NewGameConfig): GameState {
     peakUsers: 0,
     peakMrr: 0,
     techDebt: 0,
+    lastWeekUserTotal: 0,
   };
 
   // --- Competitors: 3 in your category, 2 adjacent ---
-  const competitors: Competitor[] = [];
+  // Each competitor gets hydrated with lifecycle fields (stage, users, mrr, quality,
+  // growth) so the valuation + M&A system has something to chew on from week 1.
+  const rawCompetitors: Competitor[] = [];
   const usedNames = new Set<string>();
   for (let i = 0; i < 3; i++) {
     const name = pickUnique(COMPETITOR_NAMES, usedNames, rng);
-    competitors.push({
+    rawCompetitors.push({
       id: newId("c"),
       name,
       strength: rng.int(35, 75),
@@ -127,7 +143,7 @@ export function newGame(config: NewGameConfig): GameState {
   }
   const adjacent = rotateCategory(config.startingCategory, rng);
   for (let i = 0; i < 2; i++) {
-    competitors.push({
+    rawCompetitors.push({
       id: newId("c"),
       name: pickUnique(COMPETITOR_NAMES, usedNames, rng),
       strength: rng.int(30, 70),
@@ -136,6 +152,7 @@ export function newGame(config: NewGameConfig): GameState {
       aggression: rng.range(0.1, 0.5),
     });
   }
+  const competitors: Competitor[] = rawCompetitors.map(hydrateLifecycle);
 
   const company: CompanyState = {
     name: config.companyName,
@@ -163,7 +180,21 @@ export function newGame(config: NewGameConfig): GameState {
     archivedProducts: [],
     employees: [founder, cofounder],
     competitors,
+    deals: [],
     trends: [],
+    economy: initEconomy(),
+    // v7 subsystems: new games get a fresh garage office, no perks, base support,
+    // NA-only regional presence, and no IPO / partnerships / campaigns yet.
+    office: initOffice(),
+    culture: initCulture(),
+    campaigns: [],
+    support: initSupport(),
+    patents: [],
+    openSource: [],
+    partnerships: [],
+    govContracts: [],
+    regions: initRegions(),
+    ipo: initIpo(),
     events: [{
       id: newId("ev"),
       week: 0,
@@ -187,32 +218,13 @@ function pickUnique(pool: readonly string[], used: Set<string>, rng: RNG): strin
   return name;
 }
 
-function defaultPrice(cat: ProductCategory): number {
-  switch (cat) {
-    case "productivity": return 12;
-    case "dev-tools":    return 29;
-    case "analytics":    return 49;
-    case "crm":          return 35;
-    case "creative":     return 15;
-    case "infrastructure": return 99;
-  }
-}
-
 function rotateCategory(cat: ProductCategory, rng: RNG): ProductCategory {
-  const all: ProductCategory[] = ["productivity","dev-tools","analytics","crm","creative","infrastructure"];
+  const all = Object.keys(CATEGORY_INFO) as ProductCategory[];
   const others = all.filter(c => c !== cat);
   return rng.pick(others);
 }
 
 const NAME_PREFIXES = ["Quick", "Pulse", "Flux", "Orbit", "Lumen", "Echo", "Stack", "Forge", "Nova", "Atlas"];
-const NAME_SUFFIXES_BY_CAT: Record<ProductCategory, string[]> = {
-  productivity:   ["Forms", "Docs", "Flow", "Space", "Planner"],
-  "dev-tools":    ["Build", "Runner", "Shell", "CI", "Stack"],
-  analytics:      ["Insights", "Metrics", "Beam", "Scope", "Signal"],
-  crm:            ["CRM", "Pipeline", "Deal", "Contact", "Lead"],
-  creative:       ["Studio", "Frame", "Canvas", "Compose", "Scene"],
-  infrastructure: ["DB", "Queue", "Edge", "Fabric", "Relay"],
-};
 export function suggestProductName(cat: ProductCategory, rng: RNG): string {
-  return `${rng.pick(NAME_PREFIXES)}${rng.pick(NAME_SUFFIXES_BY_CAT[cat])}`;
+  return `${rng.pick(NAME_PREFIXES)}${rng.pick(nameSuffixesFor(cat))}`;
 }

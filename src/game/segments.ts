@@ -1,17 +1,12 @@
-import { CustomerSegment, Product, ProductCategory, SegmentedPricing, SegmentedUsers } from "./types";
+import { CustomerSegment, Product, SegmentedPricing, SegmentedUsers } from "./types";
+import { segmentMixFor } from "./categories";
 import { EMPTY_TEAM, TeamEffects } from "./roles";
 import { RNG } from "./rng";
 import { churnPenalty } from "./debt";
 
-/** Default split of a signup cohort by segment for each category (sums to 1.0). */
-export const SEGMENT_MIX: Record<ProductCategory, SegmentedUsers> = {
-  productivity:   { enterprise: 0.05, smb: 0.25, selfServe: 0.70 },
-  "dev-tools":    { enterprise: 0.15, smb: 0.40, selfServe: 0.45 },
-  analytics:      { enterprise: 0.45, smb: 0.35, selfServe: 0.20 },
-  crm:            { enterprise: 0.15, smb: 0.60, selfServe: 0.25 },
-  creative:       { enterprise: 0.05, smb: 0.20, selfServe: 0.75 },
-  infrastructure: { enterprise: 0.60, smb: 0.30, selfServe: 0.10 },
-};
+// Segment mix is now owned by CATEGORY_INFO in `categories.ts`. Callers should use
+// `segmentMixFor(category)` to fetch it. Kept the named export removed so that
+// TypeScript surfaces stale references at build time.
 
 /** Weekly baseline churn rate by segment. Enterprise is very sticky, self-serve is leaky. */
 export const SEGMENT_BASE_CHURN: Record<CustomerSegment, number> = {
@@ -59,7 +54,7 @@ export const ZERO_USERS: SegmentedUsers = Object.freeze({
  *   - Without a sales team, enterprise leads barely convert (~20% of baseline mix). Hire sales
  *     to unlock the big-ticket segment. Beyond headcount, senior sales hires do more.
  *   - Marketing hires pull the mix toward self-serve (they're running ads + content to consumers).
- *   - Categories without a big enterprise presence (creative, productivity) don't magically
+ *   - Categories without a big enterprise presence (content-media, application) don't magically
  *     produce enterprise deals just because you hire AEs.
  */
 export function partitionSignups(
@@ -69,7 +64,7 @@ export function partitionSignups(
   rng?: RNG,
 ): SegmentedUsers {
   if (signupTotal <= 0) return { enterprise: 0, smb: 0, selfServe: 0 };
-  const mix = SEGMENT_MIX[p.category];
+  const mix = segmentMixFor(p.category);
   // Sales capacity: without sales hires, enterprise pipeline is inbound-only (20% of baseline).
   // A single solid AE restores most of baseline; a team stretches it further.
   const salesCapacity = team.sales <= 0
@@ -98,11 +93,13 @@ export function partitionSignups(
 /**
  * Weekly churn for a single segment on this product.
  * Ops role dampens churn (support quality, fewer escalations).
+ * Optional `economyMultiplier` scales the whole thing (recession = higher, boom = lower).
  */
 export function segmentChurnRate(
   p: Product,
   seg: CustomerSegment,
   team: TeamEffects = EMPTY_TEAM,
+  economyMultiplier: number = 1,
 ): number {
   const healthPenalty = Math.max(0, (60 - p.health)) / 100;
   const stageMultiplier = p.stage === "declining" ? 4 : p.stage === "mature" ? 1.2 : 1;
@@ -112,7 +109,12 @@ export function segmentChurnRate(
   // feel the bugs. Sensitivity still applies: enterprise rides it out better.
   const debtHit = churnPenalty(p) * sensitivity;
   const raw = SEGMENT_BASE_CHURN[seg] * stageMultiplier + healthPenalty * 0.03 * sensitivity + debtHit;
-  return Math.max(0, raw * (1 - opsDampen));
+  // Economy hits self-serve harder than enterprise. We use the sensitivity-weighted
+  // approach: only the *excess* above 1.0 scales by sensitivity, so enterprise barely
+  // notices a recession while self-serve feels it in full.
+  const econDelta = (economyMultiplier - 1) * sensitivity;
+  const econScaled = raw * (1 + econDelta);
+  return Math.max(0, econScaled * (1 - opsDampen));
 }
 
 /** Apply signups (post-partition) and churn to a product, returning the new user counts. */
@@ -120,25 +122,30 @@ export function applySegmentChanges(
   p: Product,
   signups: SegmentedUsers,
   team: TeamEffects = EMPTY_TEAM,
+  economyMultiplier: number = 1,
 ): SegmentedUsers {
-  const ent  = Math.max(0, p.users.enterprise + signups.enterprise - Math.floor(p.users.enterprise * segmentChurnRate(p, "enterprise", team)));
-  const smb  = Math.max(0, p.users.smb        + signups.smb        - Math.floor(p.users.smb        * segmentChurnRate(p, "smb",        team)));
-  const self = Math.max(0, p.users.selfServe  + signups.selfServe  - Math.floor(p.users.selfServe  * segmentChurnRate(p, "selfServe",  team)));
+  const ent  = Math.max(0, p.users.enterprise + signups.enterprise - Math.floor(p.users.enterprise * segmentChurnRate(p, "enterprise", team, economyMultiplier)));
+  const smb  = Math.max(0, p.users.smb        + signups.smb        - Math.floor(p.users.smb        * segmentChurnRate(p, "smb",        team, economyMultiplier)));
+  const self = Math.max(0, p.users.selfServe  + signups.selfServe  - Math.floor(p.users.selfServe  * segmentChurnRate(p, "selfServe",  team, economyMultiplier)));
   return { enterprise: ent, smb, selfServe: self };
 }
 
 /** Backwards-compat helper: single blended churn rate, weighted by current user mix. */
-export function blendedChurnRate(p: Product, team: TeamEffects = EMPTY_TEAM): number {
+export function blendedChurnRate(
+  p: Product,
+  team: TeamEffects = EMPTY_TEAM,
+  economyMultiplier: number = 1,
+): number {
   const total = totalUsers(p);
-  if (total <= 0) return segmentChurnRate(p, "selfServe", team);
+  if (total <= 0) return segmentChurnRate(p, "selfServe", team, economyMultiplier);
   const w = {
     enterprise: p.users.enterprise / total,
     smb: p.users.smb / total,
     selfServe: p.users.selfServe / total,
   };
-  return w.enterprise * segmentChurnRate(p, "enterprise", team)
-       + w.smb        * segmentChurnRate(p, "smb", team)
-       + w.selfServe  * segmentChurnRate(p, "selfServe", team);
+  return w.enterprise * segmentChurnRate(p, "enterprise", team, economyMultiplier)
+       + w.smb        * segmentChurnRate(p, "smb", team, economyMultiplier)
+       + w.selfServe  * segmentChurnRate(p, "selfServe", team, economyMultiplier);
 }
 
 /** Labels for display. */

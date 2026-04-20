@@ -7,13 +7,14 @@ import { weeklyPayroll } from "@/game/team";
 import { makeRng } from "@/game/rng";
 import type { GameEvent, GameState, Product, SegmentedUsers } from "@/game/types";
 import { SCHEMA_VERSION } from "@/game/types";
-import { derivePricing, SEGMENT_MIX, ZERO_USERS } from "@/game/segments";
+import { derivePricing, ZERO_USERS } from "@/game/segments";
+import { segmentMixFor } from "@/game/categories";
 
-// Split a legacy-style total user count across segments using the productivity default mix
+// Split a legacy-style total user count across segments using the application default mix
 // so these older tests can keep using a single-number total.
 function seg(n: number): SegmentedUsers {
   if (n <= 0) return { ...ZERO_USERS };
-  const mix = SEGMENT_MIX.productivity;
+  const mix = segmentMixFor("application");
   const ent = Math.round(n * mix.enterprise);
   const smb = Math.round(n * mix.smb);
   return { enterprise: ent, smb, selfServe: Math.max(0, n - ent - smb) };
@@ -27,7 +28,7 @@ function baseGame(overrides: Partial<Parameters<typeof newGame>[0]> = {}): GameS
     founderName: "Test Founder",
     archetype: "technical",
     startingCash: "bootstrapped",
-    startingCategory: "productivity",
+    startingCategory: "application",
     seed: "unit-test-seed",
     ...overrides,
   });
@@ -305,7 +306,8 @@ describe("product versioning (v2)", () => {
     return {
       id: "p_test",
       name: "TestProd",
-      category: "productivity",
+      category: "application",
+      revenueModel: "freemium",
       stage: "launched",
       version: "1.0",
       health: 60, quality: 60, users: seg(500),

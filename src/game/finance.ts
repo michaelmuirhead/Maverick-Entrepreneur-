@@ -1,5 +1,6 @@
 import { FundingRound, GameEvent, GameState } from "./types";
 import { blendedMrr, totalUsers } from "./segments";
+import { economyFundingMultiplier, economyValuationMultiplier } from "./economy";
 
 /** Monthly recurring revenue from all live products. */
 export function computeMrr(state: GameState): number {
@@ -32,15 +33,25 @@ export function fundingOffer(state: GameState): FundingOffer | null {
     p => (p.stage === "launched" || p.stage === "mature") && p.health > 60 && totalUsers(p) > 50,
   );
   const stage = state.company.stage;
+  // Economy scales both round size and valuation cap. Boom = bigger checks & higher
+  // post-money; recession = smaller checks & cut valuations at the same MRR gate.
+  const fmul = state.economy ? economyFundingMultiplier(state.economy) : 1;
+  const vmul = state.economy ? economyValuationMultiplier(state.economy) : 1;
+  const scale = (amount: number, post: number, dilution: number): FundingOffer => ({
+    label: "",
+    amount: Math.round(amount * fmul),
+    postMoney: Math.round(post * vmul),
+    dilution,
+  });
 
   if (stage === "pre-seed" && hasGrowingProduct && mrr > 5_000) {
-    return { label: "Seed", amount: 2_000_000, postMoney: 10_000_000, dilution: 0.2 };
+    return { ...scale(2_000_000, 10_000_000, 0.2), label: "Seed" };
   }
   if (stage === "seed" && mrr > 40_000) {
-    return { label: "Series A", amount: 10_000_000, postMoney: 50_000_000, dilution: 0.2 };
+    return { ...scale(10_000_000, 50_000_000, 0.2), label: "Series A" };
   }
   if (stage === "series-a" && mrr > 200_000) {
-    return { label: "Series B", amount: 25_000_000, postMoney: 150_000_000, dilution: 0.17 };
+    return { ...scale(25_000_000, 150_000_000, 0.17), label: "Series B" };
   }
   return null;
 }
@@ -59,13 +70,18 @@ export type PitchOutcome =
 export function pitchForFunding(state: GameState): PitchOutcome {
   const mrr = computeMrr(state);
   const stage = state.company.stage;
+  const fmul = state.economy ? economyFundingMultiplier(state.economy) : 1;
+  const vmul = state.economy ? economyValuationMultiplier(state.economy) : 1;
 
   // What's the target round for this stage?
-  const target: { label: string; required: number; amount: number; postMoney: number; dilution: number } | null =
+  const rawTarget: { label: string; required: number; amount: number; postMoney: number; dilution: number } | null =
     stage === "pre-seed" ? { label: "Seed",     required: 5_000,   amount: 2_000_000,  postMoney: 10_000_000,  dilution: 0.2 } :
     stage === "seed"     ? { label: "Series A", required: 40_000,  amount: 10_000_000, postMoney: 50_000_000,  dilution: 0.2 } :
     stage === "series-a" ? { label: "Series B", required: 200_000, amount: 25_000_000, postMoney: 150_000_000, dilution: 0.17 } :
     null;
+  const target = rawTarget
+    ? { ...rawTarget, amount: Math.round(rawTarget.amount * fmul), postMoney: Math.round(rawTarget.postMoney * vmul) }
+    : null;
 
   if (!target) {
     return {

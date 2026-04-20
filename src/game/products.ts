@@ -39,10 +39,66 @@ export function marketingMultiplier(p: Product, team: TeamEffects = EMPTY_TEAM):
   return Math.min(cap, base * lift);
 }
 
-/** Weekly revenue = blended MRR / 4.3 (converts monthly to weekly). */
+/**
+ * Fraction of a freemium product's user base that actually pays. The rest are the
+ * top-of-funnel freebies — valuable for viral growth, worthless for ARR.
+ */
+export const FREEMIUM_CONVERSION_RATE = 0.08;
+
+/**
+ * Weekly revenue from a product. Branches on `p.revenueModel`:
+ *
+ *   - subscription: classic blended MRR / 4.3 across all paid segments.
+ *   - freemium:     subscription math × FREEMIUM_CONVERSION_RATE. Big user counts, modest MRR.
+ *   - contract:     enterprise seats only. Others are treated as pilots, not revenue.
+ *                   (Enterprise contracts in these categories cover the whole org.)
+ *   - one-time:     license fee × new users this week. Steady churn-replacement buys
+ *                   still count — every new signup is a new sale at roughly a year's price.
+ *                   Falls back to blendedMrr/4.3 when lastWeekUserTotal isn't populated yet.
+ */
 export function weeklyRevenue(p: Product): number {
   if (!["launched", "mature", "declining"].includes(p.stage)) return 0;
-  return blendedMrr(p) / 4.3;
+
+  switch (p.revenueModel) {
+    case "subscription":
+      return blendedMrr(p) / 4.3;
+
+    case "freemium":
+      return (blendedMrr(p) * FREEMIUM_CONVERSION_RATE) / 4.3;
+
+    case "contract": {
+      // Enterprise-only. Contract software is organizationally negotiated; stray
+      // SMB / self-serve trialists in the data don't pay and don't renew.
+      const contractMrr = p.users.enterprise * p.pricing.enterprise;
+      return contractMrr / 4.3;
+    }
+
+    case "one-time": {
+      const currentUsers = totalUsers(p);
+      const prev = p.lastWeekUserTotal;
+      if (prev === undefined) {
+        // Legacy save (no delta available yet) — fall back to sub-style amortized revenue
+        // so we don't silently zero out a product until the next tick repopulates the field.
+        return blendedMrr(p) / 4.3;
+      }
+      const newUsers = Math.max(0, currentUsers - prev);
+      if (newUsers === 0) return 0;
+      // Average *monthly* price across whoever is currently buying, times ~12 months
+      // to approximate a perpetual-license fee. This keeps one-time at roughly subscription
+      // steady-state when growth is ~1-2% / week, and heavier on boom weeks.
+      const avgMonthlyPrice = currentUsers > 0
+        ? blendedMrr(p) / currentUsers
+        : p.pricing.selfServe;
+      return newUsers * avgMonthlyPrice * 12;
+    }
+
+    default: {
+      // Exhaustiveness guard — this keeps TS honest if a new RevenueModel is added later.
+      const _exhaust: never = p.revenueModel;
+      void _exhaust;
+      return blendedMrr(p) / 4.3;
+    }
+  }
 }
 
 /** Health decays over time — tech ages, market shifts. Quality buffers the decay. */

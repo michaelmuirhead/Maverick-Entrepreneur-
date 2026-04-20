@@ -3,49 +3,91 @@
 
 export type ID = string;
 
+/**
+ * Top-level product domain. Drives team composition, dev timeline, TAM, revenue model
+ * defaults, segment mix, pricing, competition density, and maintenance burden.
+ *
+ * Single source of truth for per-category metadata lives in `src/game/categories.ts`
+ * as `CATEGORY_INFO`. Do not hardcode category-specific numbers anywhere else.
+ */
 export type ProductCategory =
-  | "productivity"
-  | "dev-tools"
-  | "analytics"
-  | "crm"
-  | "creative"
-  | "infrastructure";
+  | "application"     // consumer / prosumer apps — freemium, big TAM, crowded
+  | "system"          // OS, drivers, low-level tooling — one-time licensing, slow cadence
+  | "enterprise"      // ERP/HRIS-style suites — contract sales, sticky, long cycles
+  | "dev-tools"       // CI/CD, SDKs, APIs — subscription, loyal, prosumer-heavy
+  | "custom"          // bespoke / services builds — contract, margin over scale
+  | "embedded"        // IoT / firmware — one-time hardware+software bundles
+  | "content-media"   // streaming / creator tools — subscription, viral, churny
+  | "finance-ops"     // accounting, billing, supply chain — subscription, regulated
+  | "security-it";    // MDM, SIEM, endpoint — subscription, compliance gate
 
-export const PRODUCT_CATEGORIES: {
+/**
+ * How a product monetizes its user base. Drives the revenue calculation branch
+ * in `weeklyRevenue()`:
+ *   subscription — classic MRR / 4.3 from all paid seats
+ *   one-time     — revenue recognized on *new* sales × list price × ~annual factor
+ *   contract     — enterprise seats only, quarterly lumpy payments
+ *   freemium     — only the paid-conversion fraction of users generates MRR
+ */
+export type RevenueModel = "subscription" | "one-time" | "contract" | "freemium";
+
+/**
+ * Rich, per-category configuration. Everything the sim needs to specialize a category
+ * lives here. New categories = add a row here; no other file should branch on category id.
+ */
+export interface CategoryInfo {
   id: ProductCategory;
   label: string;
   /** One-liner shown in the category list. */
   blurb: string;
   /** Longer description shown once a category is highlighted. */
   detail: string;
-  /** Rough suggested monthly price point, used as a default. */
+
+  // --- Build economics ----------------------------------------------------
+  /** Baseline dev time from concept→launch in weeks at standard team size. */
+  devWeeksBase: number;
+  /** Minimum team size (engineers) for realistic shipping — under this, dev slows. */
+  teamSizeMin: number;
+  /** Relative maintenance burden post-launch. 1.0 = baseline, >1 eats more cash. */
+  maintenanceBurden: number;
+
+  // --- Market shape -------------------------------------------------------
+  /** TAM multiplier. 1.0 = baseline; 1.5 = ~50% bigger market. */
+  marketSize: number;
+  /** Weekly organic market growth — drives demand drift. 0.015 ≈ 80%/yr growth. */
+  marketGrowth: number;
+  /** 0..1 competitive density. Higher = more rivals, more price pressure. */
+  competitionDensity: number;
+
+  // --- Monetization -------------------------------------------------------
+  /** Default revenue model for newly-created products in this category. */
+  revenueModel: RevenueModel;
+  /** Suggested blended launch price — used as default pricing seed. */
+  defaultPrice: number;
+  /** Typical ARPU for valuing competitors in this category. $/user/month. */
+  arpu: number;
+  /** Default segment mix for a new product in this category. Must sum to 1. */
+  segmentMix: { enterprise: number; smb: number; selfServe: number };
+
+  // --- Naming / flavor ----------------------------------------------------
+  /** Suffix pool used by the product-name generator. */
+  nameSuffixes: string[];
+}
+
+/** Back-compat shape for the category picker. Derived from CATEGORY_INFO. */
+export interface ProductCategoryChoice {
+  id: ProductCategory;
+  label: string;
+  blurb: string;
+  detail: string;
   suggestedPrice: number;
-}[] = [
-  { id: "productivity", label: "Productivity",
-    blurb: "Forms, docs, scheduling — broad market, lots of competition.",
-    detail: "Tools that help people and teams plan, collaborate, and ship work. Largest TAM by a mile; also the most crowded category. Expect heavy price pressure but fast word-of-mouth when a product clicks.",
-    suggestedPrice: 12 },
-  { id: "dev-tools", label: "Dev Tools",
-    blurb: "High-margin, loyal users, smaller TAM.",
-    detail: "Build tools, CI/CD, editors, runners, APIs. Developers pay well for quality and hate switching — but you have to impress them first. Viral among engineering teams, slower to climb in revenue.",
-    suggestedPrice: 29 },
-  { id: "analytics", label: "Analytics",
-    blurb: "Sticky enterprise spend, slow sales cycles.",
-    detail: "Dashboards, metrics, BI, event tracking. Customers stick around for years once wired in, but sales take months and enterprise wants custom everything. Big contracts, patient founders win.",
-    suggestedPrice: 49 },
-  { id: "crm", label: "CRM",
-    blurb: "Big market, incumbents are entrenched.",
-    detail: "Sales pipelines, contacts, deal management. Huge market, but Salesforce and HubSpot cast long shadows. A sharp vertical focus beats a general-purpose play. Retention is decent once you're embedded.",
-    suggestedPrice: 35 },
-  { id: "creative", label: "Creative",
-    blurb: "Design, video, audio — great for virality.",
-    detail: "Canvas tools, video editors, audio mixers, design systems. Consumers and prosumers drive growth; the output is inherently shareable, which drives free acquisition. Churn can be rough if the tool feels like a toy.",
-    suggestedPrice: 15 },
-  { id: "infrastructure", label: "Infrastructure",
-    blurb: "Databases, queues, storage. Enterprise deals, hard to crack.",
-    detail: "Databases, queues, edge compute, observability, storage. Highest ARR per customer but the longest sales cycles. Security reviews, compliance, and 99.99% SLAs come standard. Not for the impatient.",
-    suggestedPrice: 99 },
-];
+  revenueModel: RevenueModel;
+  devWeeksBase: number;
+  teamSizeMin: number;
+}
+
+// Re-exported from categories.ts for convenience so existing imports keep working.
+export { PRODUCT_CATEGORIES, CATEGORY_INFO } from "./categories";
 
 export type ProductStage =
   | "concept"    // on the roadmap
@@ -77,6 +119,12 @@ export interface Product {
   id: ID;
   name: string;
   category: ProductCategory;
+  /**
+   * How this product monetizes. Set at creation time from category default but can be
+   * overridden later (e.g. a dev-tool that pivots freemium→subscription). Revenue math
+   * in `weeklyRevenue()` branches on this field.
+   */
+  revenueModel: RevenueModel;
   stage: ProductStage;
   version: string;             // e.g. "1.0", "2.1"
   health: number;              // 0..100 — tech freshness + product-market fit
@@ -118,6 +166,13 @@ export interface Product {
     startedWeek: number;
     devBudget: number;         // $/week earmarked for the vN build
   };
+
+  /**
+   * Blended user total at the end of the previous tick. Used by the one-time and
+   * contract revenue models to recognize revenue on *new* sales this week rather
+   * than the full installed base. Populated by the tick; undefined on legacy saves.
+   */
+  lastWeekUserTotal?: number;
 }
 
 /** Post-mortem snapshot written when a product is closed (sunset or naturally EOL'd). */
@@ -192,6 +247,24 @@ export type CompetitorPersonality =
   | "scrappy"        // unpredictable — viral campaigns, surprise launches, niche wins
   | "enterprise";    // quiet but strong — marquee logos, long sales cycles
 
+/**
+ * Lifecycle stage for a competitor. Drives their growth curve, burn, valuation multiple,
+ * and the kind of M&A activity they're likely to be involved in.
+ *   scrappy  - young, small, fast-growing if healthy
+ *   growth   - post-PMF, scaling users, raising big rounds
+ *   mature   - plateaued leader, stable MRR
+ *   declining - losing share, quality slipping
+ *   acquired - no longer operating; absorbed into buyer
+ *   dead     - ran out of cash without a buyer
+ */
+export type CompetitorStage =
+  | "scrappy"
+  | "growth"
+  | "mature"
+  | "declining"
+  | "acquired"
+  | "dead";
+
 export interface Competitor {
   id: ID;
   name: string;
@@ -210,6 +283,63 @@ export interface Competitor {
   fundingStage?: "pre-seed" | "seed" | "series-a" | "series-b";
   /** Most recent round week, used for cooldowns. */
   lastFundingWeek?: number;
+
+  // --- Lifecycle / valuation ---------------------------------------------
+  /** Lifecycle stage. Undefined on legacy saves — defaulted in `withDefaults`. */
+  stage?: CompetitorStage;
+  /** Paid users across all their products (no segment split for rivals). */
+  users?: number;
+  /** Monthly recurring revenue. Drives valuation. */
+  mrr?: number;
+  /** Weekly user growth rate baseline (can be negative). Fluctuates with health. */
+  growthRate?: number;
+  /** Product quality 0..100. Drives churn and signup conversion. */
+  productQuality?: number;
+  /** Week the competitor was founded (approximate; just used for age flavor). */
+  foundedWeek?: number;
+  /** If acquired, who by. "player" or another competitor id. */
+  acquiredBy?: ID | "player";
+  /** Week the acquisition closed. */
+  acquiredWeek?: number;
+  /** Last time the player made (or a rival made) a bid on them. Used for cooldown. */
+  lastOfferWeek?: number;
+  /** Player cannot re-approach before this week if the last bid was rejected. */
+  rejectedOfferUntil?: number;
+  /** Number of weeks the competitor has been in the red (cash < 0 tolerance). */
+  distressWeeks?: number;
+}
+
+/** How aggressive an acquisition bid is relative to fair valuation. */
+export type OfferTier = "lowball" | "fair" | "premium";
+
+/**
+ * Record of an acquisition. Deliberately structured so future mechanics
+ * (stock portion, earnouts, integration risk, antitrust blocks) can be added
+ * without changing shape — today only the "cash" structure is populated.
+ */
+export interface AcquisitionDeal {
+  id: ID;
+  week: number;
+  /** "player" or a competitor id. */
+  acquirerId: ID | "player";
+  acquirerName: string;
+  targetId: ID;
+  targetName: string;
+  /** Only "cash" today. "mixed" / "earnout" reserved for later features. */
+  structure: "cash";
+  /** Total cash consideration paid at close. */
+  pricePaid: number;
+  /** Fair valuation snapshot at the time of the deal — audit trail for the UI. */
+  fairValuation: number;
+  /** Premium ratio over fair — 0.7 lowball, 1.0 fair, 1.4 premium (can be any ratio). */
+  premiumMultiple: number;
+  /** One-liner the UI renders for the ticker + deal history panel. */
+  narrative: string;
+  // Reserved for future use, always zero/false today.
+  stockPortion?: number;
+  earnoutPortion?: number;
+  integrationDamage?: number;
+  antitrustBlocked?: boolean;
 }
 
 export type MarketTrendKind =
@@ -218,15 +348,32 @@ export type MarketTrendKind =
   | "recession"
   | "dev-tool-renaissance"
   | "creative-surge"
-  | "enterprise-freeze";
+  | "enterprise-freeze"
+  | "security-scare"       // spikes demand for security-it, dampens application
+  | "hardware-cycle"       // lifts embedded + system during refresh waves
+  | "crypto-winter"        // deflates speculative-adjacent categories + finance-ops
+  | "remote-work-surge"    // lifts content-media + dev-tools + application
+  | "supply-shock"         // raises hardware costs, dampens embedded + system
+  | "compliance-wave";     // tailwind for finance-ops + security-it, headwind for application
 
 export interface MarketTrend {
   kind: MarketTrendKind;
   label: string;
   affects: ProductCategory[];
-  demandMultiplier: number;    // 1.0 = neutral
+  /** Peak demand multiplier this trend reaches at full intensity. 1.0 = neutral. */
+  demandMultiplier: number;
   startedWeek: number;
   durationWeeks: number;
+  /**
+   * How many weeks the trend ramps up from neutral to peak. Optional on legacy saves;
+   * absent = trend hits at full intensity immediately (old behavior).
+   */
+  rampWeeks?: number;
+  /**
+   * How many weeks the trend fades from peak back to neutral at the tail end.
+   * Optional on legacy saves; absent = snap-end behavior.
+   */
+  fadeWeeks?: number;
 }
 
 export interface FundingRound {
@@ -262,6 +409,224 @@ export interface CompanyState {
   stage: "pre-seed" | "seed" | "series-a" | "series-b";
 }
 
+/**
+ * Macro-economic phase. Slow-moving world state that biases demand, funding, churn,
+ * hiring costs, and valuations for everyone at once. Persists across many weeks.
+ */
+export type EconomyPhase = "boom" | "stable" | "recession";
+
+/**
+ * Persistent macro state. Phase transitions are sampled weekly against a markov-ish
+ * transition matrix (see economy.ts). Intensity (0..1) smooths the edges so a
+ * recession takes weeks to bite fully, and a recovery takes weeks to feel real.
+ */
+export interface EconomyState {
+  phase: EconomyPhase;
+  /** 0..1 — how hard the phase hits right now. Ramps up after a phase change. */
+  intensity: number;
+  /** Tick week the current phase began. */
+  phaseStartedWeek: number;
+  /** Minimum weeks to stay in a phase before we may roll a new one. Keeps the cycle slow. */
+  minDurationWeeks: number;
+}
+
+/**
+ * Office tier: physical workspace the company leases. Scales from scrappy to corporate
+ * and gates headcount capacity, baseline productivity, morale, and investor/recruit prestige.
+ *
+ * Single source of truth for per-tier numbers lives in `src/game/office.ts` as `OFFICE_TIERS`.
+ */
+export type OfficeTier =
+  | "garage"      // the founders' apartment / parent's garage — free but capped
+  | "coworking"   // hot desks, WeWork vibes — cheap, decent for small teams
+  | "loft"        // your own leased space for the first time
+  | "office"      // proper office with conference rooms
+  | "hq"          // dedicated HQ with branding on the door
+  | "campus";     // corporate campus — prestige but expensive
+
+/** Persistent office state. Migrates in with a "garage" default for legacy saves. */
+export interface OfficeState {
+  tier: OfficeTier;
+  /** Week the current tier was moved into. Used for "just moved" flavor. */
+  sinceWeek: number;
+  /** Pending upgrade that closes `readyWeek`. Undefined = no move in progress. */
+  pendingUpgrade?: {
+    toTier: OfficeTier;
+    startedWeek: number;
+    readyWeek: number;
+    buildOutCost: number;   // one-time cash cost paid when upgrade started
+  };
+}
+
+/** Culture / perk system. Perks are toggleable budget items that boost morale and retention. */
+export type PerkKind =
+  | "free-lunch"        // daily catered food
+  | "gym-stipend"       // fitness reimbursement
+  | "learning-budget"   // conferences / books / courses
+  | "wellness-stipend"  // therapy, meditation apps
+  | "parental-leave"    // paid family leave
+  | "remote-flex"       // remote-first / hybrid policy
+  | "unlimited-pto"     // unlimited vacation (which nobody takes)
+  | "offsite-retreats"  // quarterly team trips
+  | "dog-friendly"      // bring your dog to work
+  | "equity-refresh";   // annual stock refresh grants
+
+export interface CultureState {
+  /** Which perks are currently enabled. Each perk has a weekly per-employee cost. */
+  perks: PerkKind[];
+  /**
+   * Lightweight narrative metric 0..100 — the blended "culture score".
+   * Derived each tick from active perks + average morale + office tier.
+   * Drives: recruit signal quality, retention, PR events.
+   */
+  cultureScore: number;
+}
+
+/**
+ * Marketing campaign — a finite, player-scheduled spend burst with a clear theme.
+ * Separate from product-level `marketingBudget` (which is always-on ad spend).
+ *
+ * Campaigns have a ramp (awareness takes a few weeks to land), a peak, and a tail;
+ * they affect signups across all products in their target category/segment for the
+ * duration, and can produce their own one-off events (viral hits, PR disasters).
+ */
+export type MarketingChannel =
+  | "social"       // TikTok / IG / X — cheap, viral potential, noisy ROI
+  | "content"      // blog / SEO / podcasts — slow but compounding
+  | "paid-ads"     // Google / Meta / LinkedIn — predictable CAC
+  | "pr"           // press / earned media — hit-or-miss but prestige
+  | "events"       // conferences / booth sponsorships — enterprise-flavored
+  | "influencer";  // creator partnerships — YOLO-shaped ROI
+
+export interface MarketingCampaign {
+  id: ID;
+  name: string;
+  channel: MarketingChannel;
+  /** Which product the campaign promotes. A campaign can only target a live product. */
+  productId: ID;
+  /** Total budget. Paid out evenly across `durationWeeks`. */
+  budget: number;
+  startedWeek: number;
+  durationWeeks: number;
+  /** Multiplier on signups (>1 boosts, <1 dud). Computed at creation from channel + roll. */
+  peakMultiplier: number;
+  /** Random performance roll sampled at creation, 0..1. Used for late-tick flavor events. */
+  performanceRoll: number;
+  /** Optional CAC estimate for UI. */
+  estimatedCAC?: number;
+}
+
+/**
+ * Customer support quality system. Single team-wide stat (not per product) driven by
+ * support headcount vs. total users. Affects churn and quality-of-revenue over time.
+ */
+export interface SupportState {
+  /** 0..100. Derived each tick from support employees / (users per thousand). */
+  quality: number;
+  /** Total tickets raised this week (stat used for UI + events). */
+  ticketsThisWeek: number;
+  /** Rolling 13-week complaint count — powers the "support collapse" warning event. */
+  complaintsRecent: number;
+}
+
+/**
+ * Patent / IP protection. Patents cost cash to file, take weeks to grant, and once
+ * granted reduce the effectiveness of feature-clone moves by competitors.
+ */
+export interface Patent {
+  id: ID;
+  title: string;
+  /** Category the patent covers — protects products in that category. */
+  category: ProductCategory;
+  filedWeek: number;
+  /** Week the patent grants (filed + ~52 weeks). Undefined = still pending. */
+  grantedWeek?: number;
+  /** If granted, how many years of protection remain (ticks down). */
+  yearsRemaining?: number;
+  /** Total cash spent to file + prosecute. */
+  cost: number;
+}
+
+/** Open-source project the company sponsors. Trades cash for brand / recruiting signal. */
+export interface OpenSourceProject {
+  id: ID;
+  name: string;
+  category: ProductCategory;
+  /** 0..100 — popularity. Grows with investment; decays if underfunded. */
+  stars: number;
+  weeklyBudget: number;
+  startedWeek: number;
+}
+
+/** Active partnership with another company (real or simulated). */
+export interface Partnership {
+  id: ID;
+  partnerName: string;
+  /** What kind of integration this is — shapes the benefit pattern. */
+  kind: "integration" | "reseller" | "co-marketing" | "platform";
+  /** Week the partnership began. */
+  startedWeek: number;
+  /** Ongoing $/week cost. Can be 0 for pure co-marketing. */
+  weeklyCost: number;
+  /** Peak signup boost once integration ramps in (typically 1.03..1.15). */
+  signupMultiplier: number;
+  /** Which product category primarily benefits. */
+  benefitsCategory: ProductCategory;
+}
+
+/** Government contract — lumpy, prestigious, slow-paying. */
+export interface GovernmentContract {
+  id: ID;
+  agency: string;
+  title: string;
+  /** Total contract value. Paid out in equal monthly installments over `months`. */
+  totalValue: number;
+  months: number;
+  /** Weeks since contract award. Used to compute what's been paid so far. */
+  startedWeek: number;
+  /** Which product category is eligible. */
+  category: ProductCategory;
+  /** Required clearance tier — tougher contracts need more security/compliance posture. */
+  clearance: "basic" | "cleared" | "fedramp";
+}
+
+/** Active region the company operates in. */
+export type Region = "na" | "emea" | "apac" | "latam";
+
+export interface RegionalPresence {
+  region: Region;
+  enteredWeek: number;
+  /** Fraction of total signups routed to this region. Summed across regions ≤ 1. */
+  marketCapture: number;
+  /** Localization quality 0..100 — drives conversion in-region. */
+  localizationScore: number;
+}
+
+/**
+ * IPO posture — once the company hits Series B + enough MRR, they can pursue an IPO.
+ * Progressing through stages unlocks the actual IPO action.
+ */
+export type IpoStage =
+  | "none"           // nothing yet
+  | "exploring"      // talking to banks, auditors
+  | "filed"          // S-1 on file
+  | "roadshow"       // meeting institutional investors
+  | "public";        // trading
+
+export interface IpoState {
+  stage: IpoStage;
+  /** Stage-entered week. Each stage has a minimum dwell time before you can progress. */
+  stageStartedWeek: number;
+  /** Offering price per share at pricing — set when you enter `public`. */
+  offerPrice?: number;
+  /** Current share price — drifts based on MRR growth + macro once public. */
+  currentSharePrice?: number;
+  /** Total shares outstanding. */
+  sharesOutstanding?: number;
+  /** Cash raised at IPO, booked into finance.cash on `stage -> public`. */
+  proceeds?: number;
+}
+
 export interface GameState {
   seed: string;
   // Time: discrete week counter; week 0 = day 1.
@@ -277,8 +642,33 @@ export interface GameState {
   archivedProducts: ArchivedProduct[];
   employees: Employee[];
   competitors: Competitor[];
+  /** Completed acquisitions. Most recent first, capped. */
+  deals: AcquisitionDeal[];
   trends: MarketTrend[];
+  /** Macro-economic phase (boom/stable/recession) and its ramping intensity. */
+  economy: EconomyState;
   events: GameEvent[];   // most recent first, capped
+
+  /** Physical office. Optional on legacy saves — defaults to "garage" in migration v7. */
+  office?: OfficeState;
+  /** Culture & perks. Optional on legacy saves — defaults to no perks in migration v7. */
+  culture?: CultureState;
+  /** Live marketing campaigns. Optional on legacy saves — defaults to [] in migration v7. */
+  campaigns?: MarketingCampaign[];
+  /** Customer support quality metrics. Optional on legacy saves. */
+  support?: SupportState;
+  /** IP portfolio. Optional on legacy saves. */
+  patents?: Patent[];
+  /** Open-source projects we sponsor. Optional on legacy saves. */
+  openSource?: OpenSourceProject[];
+  /** Active partnerships. Optional on legacy saves. */
+  partnerships?: Partnership[];
+  /** Active + historical government contracts. Optional on legacy saves. */
+  govContracts?: GovernmentContract[];
+  /** Regional operations. Optional on legacy saves — defaults to [{ region: "na", ...}]. */
+  regions?: RegionalPresence[];
+  /** IPO state machine. Optional on legacy saves — defaults to { stage: "none" }. */
+  ipo?: IpoState;
 
   // Game over flags
   gameOver?: { reason: "bankrupt" | "acquired" | "ipo"; week: number; narrative: string };
@@ -291,4 +681,4 @@ export interface GameState {
   schemaVersion: number;
 }
 
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 7;

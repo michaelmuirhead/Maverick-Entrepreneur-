@@ -3,11 +3,12 @@ import { newGame } from "@/game/init";
 import { marketingMultiplier, maintenanceCost, signupsThisWeek } from "@/game/products";
 import { makeRng } from "@/game/rng";
 import type { GameState, Product, SegmentedUsers } from "@/game/types";
-import { derivePricing, SEGMENT_MIX, ZERO_USERS } from "@/game/segments";
+import { derivePricing, ZERO_USERS } from "@/game/segments";
+import { segmentMixFor } from "@/game/categories";
 
 function seg(n: number): SegmentedUsers {
   if (n <= 0) return { ...ZERO_USERS };
-  const mix = SEGMENT_MIX.productivity;
+  const mix = segmentMixFor("application");
   const ent = Math.round(n * mix.enterprise);
   const smb = Math.round(n * mix.smb);
   return { enterprise: ent, smb, selfServe: Math.max(0, n - ent - smb) };
@@ -19,7 +20,7 @@ function baseGame(): GameState {
     founderName: "Test Founder",
     archetype: "technical",
     startingCash: "bootstrapped",
-    startingCategory: "productivity",
+    startingCategory: "application",
     seed: "marketing-test-seed",
   });
 }

@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Product, SegmentedUsers } from "@/game/types";
 import {
-  SEGMENT_MIX,
   ZERO_USERS,
   blendedChurnRate,
   blendedMrr,
@@ -10,12 +9,14 @@ import {
   segmentChurnRate,
   totalUsers,
 } from "@/game/segments";
+import { CATEGORY_INFO, segmentMixFor } from "@/game/categories";
 import { teamEffects } from "@/game/roles";
 import type { Employee } from "@/game/types";
 
 function product(overrides: Partial<Product> = {}): Product {
   return {
-    id: "p_seg", name: "Seg Test", category: "productivity",
+    id: "p_seg", name: "Seg Test", category: "application",
+    revenueModel: "freemium",
     stage: "launched", version: "1.0",
     health: 70, quality: 70,
     users: { enterprise: 5, smb: 50, selfServe: 200 },
@@ -61,18 +62,19 @@ describe("segments: partitionSignups", () => {
     return { id, name: id, role, level, salary: 0, skill, morale: 80, hiredWeek: 0 };
   }
 
-  it("without sales, enterprise share collapses to ~20% of baseline", () => {
-    // Analytics category has 0.45 enterprise baseline. Without a sales team the
-    // effective mix should be roughly 20% of that.
-    const p = product({ category: "analytics" });
+  it("without sales, enterprise share collapses well below the baseline mix", () => {
+    // Enterprise category has 0.65 enterprise baseline. Without a sales team the
+    // pipeline is inbound-only (20% of baseline), so the realized enterprise share
+    // should be far below the "fully staffed" mix.
+    const p = product({ category: "enterprise", revenueModel: "contract" });
     const split = partitionSignups(1000, p);
     const entRatio = split.enterprise / (split.enterprise + split.smb + split.selfServe);
-    // Baseline would be ~0.45. Without sales, it should be well below that.
-    expect(entRatio).toBeLessThan(0.2);
+    // Baseline would be ~0.65. Without sales, it should be well under half of that.
+    expect(entRatio).toBeLessThan(0.35);
   });
 
   it("a sales team restores enterprise share", () => {
-    const p = product({ category: "analytics" });
+    const p = product({ category: "enterprise", revenueModel: "contract" });
     const team = teamEffects(["s"], [emp("s", "sales", 3, 80)]);
     const split = partitionSignups(1000, p, team);
     const entRatio = split.enterprise / (split.enterprise + split.smb + split.selfServe);
@@ -80,7 +82,7 @@ describe("segments: partitionSignups", () => {
   });
 
   it("marketing hires tilt the mix toward self-serve", () => {
-    const p = product({ category: "creative" });
+    const p = product({ category: "content-media", revenueModel: "subscription" });
     const bareSplit = partitionSignups(1000, p);
     const mktTeam = teamEffects(["m"], [emp("m", "marketing", 3, 80)]);
     const mktSplit = partitionSignups(1000, p, mktTeam);
@@ -123,16 +125,16 @@ describe("segments: churn", () => {
   });
 });
 
-describe("segments: SEGMENT_MIX shape", () => {
+describe("CATEGORY_INFO: segmentMix shape", () => {
   it("every category mix sums to approximately 1.0", () => {
-    for (const cat of Object.keys(SEGMENT_MIX) as (keyof typeof SEGMENT_MIX)[]) {
-      const m = SEGMENT_MIX[cat];
+    for (const cat of Object.keys(CATEGORY_INFO) as (keyof typeof CATEGORY_INFO)[]) {
+      const m = CATEGORY_INFO[cat].segmentMix;
       expect(Math.abs(m.enterprise + m.smb + m.selfServe - 1)).toBeLessThan(0.001);
     }
   });
 
-  it("infrastructure skews heavily to enterprise; creative skews to self-serve", () => {
-    expect(SEGMENT_MIX.infrastructure.enterprise).toBeGreaterThan(0.5);
-    expect(SEGMENT_MIX.creative.selfServe).toBeGreaterThan(0.6);
+  it("custom software skews heavily to enterprise; application skews to self-serve", () => {
+    expect(segmentMixFor("custom").enterprise).toBeGreaterThan(0.5);
+    expect(segmentMixFor("application").selfServe).toBeGreaterThan(0.6);
   });
 });

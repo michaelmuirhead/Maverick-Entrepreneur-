@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useGame } from "@/game/store";
-import { ArchivedProduct, PRODUCT_CATEGORIES, Product, ProductCategory } from "@/game/types";
+import { ArchivedProduct, PRODUCT_CATEGORIES, Product, ProductCategory, RevenueModel } from "@/game/types";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
 import { ProductList } from "@/components/ProductList";
@@ -221,9 +221,16 @@ export default function ProductsPage() {
   );
 }
 
+const REVENUE_MODEL_LABEL: Record<RevenueModel, string> = {
+  subscription: "Subscription",
+  "one-time":   "One-time",
+  contract:     "Contract",
+  freemium:     "Freemium",
+};
+
 function NewProductModal({ onClose, onConfirm }: { onClose: () => void; onConfirm: (name: string, cat: ProductCategory, price: number) => void }) {
   const [name, setName] = useState("");
-  const [cat, setCat] = useState<ProductCategory>("productivity");
+  const [cat, setCat] = useState<ProductCategory>("application");
   const selectedMeta = PRODUCT_CATEGORIES.find(c => c.id === cat)!;
   const [price, setPrice] = useState(selectedMeta.suggestedPrice);
 
@@ -283,6 +290,9 @@ function NewProductModal({ onClose, onConfirm }: { onClose: () => void; onConfir
                       </span>
                     </div>
                     <div style={{ fontSize: 12, color: "var(--color-ink-2)", lineHeight: 1.35 }}>{c.blurb}</div>
+                    <div className="mono" style={{ fontSize: 10, color: "var(--color-ink-2)", letterSpacing: ".04em", marginTop: 2 }}>
+                      {REVENUE_MODEL_LABEL[c.revenueModel]} · ~{c.devWeeksBase}w build · min {c.teamSizeMin} eng
+                    </div>
                   </button>
                 );
               })}

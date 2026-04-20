@@ -1,10 +1,16 @@
 import { Competitor, CompetitorPersonality, Employee, GameEvent, GameState, ProductCategory } from "./types";
 import { RNG } from "./rng";
 import { applyPoachAttempt } from "./team";
+import { hydrateLifecycle } from "./mergers";
+import { CATEGORY_INFO } from "./categories";
 
 /** Competitor pressure on player products in the same category, 0..1. */
 export function pressureOn(category: ProductCategory, competitors: Competitor[]): number {
-  const inCat = competitors.filter(c => c.category === category);
+  // Acquired / dead competitors no longer exert competitive pressure — their MRR
+  // either moved into the buyer or evaporated entirely.
+  const inCat = competitors.filter(c =>
+    c.category === category && c.stage !== "acquired" && c.stage !== "dead",
+  );
   if (inCat.length === 0) return 0;
   const totalStrength = inCat.reduce((s, c) => s + (c.strength * (0.4 + c.marketShare)), 0);
   // Balance: rivals can compress signup flow, but never strangle it. 0.75 ceiling
@@ -14,7 +20,16 @@ export function pressureOn(category: ProductCategory, competitors: Competitor[])
 
 /** Default personality + stats for legacy competitors (from old saves without these fields). */
 function withDefaults(c: Competitor): Competitor {
-  if (c.personality && typeof c.cash === "number" && typeof c.headcount === "number" && c.fundingStage) return c;
+  // Fast path: all personality/funding/lifecycle fields already present.
+  const fullyHydrated = c.personality
+    && typeof c.cash === "number"
+    && typeof c.headcount === "number"
+    && c.fundingStage
+    && c.stage
+    && typeof c.users === "number"
+    && typeof c.mrr === "number";
+  if (fullyHydrated) return c;
+
   // Derive a personality from their aggression + marketShare if unset.
   const personality: CompetitorPersonality = c.personality
     ?? (c.aggression > 0.55 ? "aggressive"
@@ -27,13 +42,15 @@ function withDefaults(c: Competitor): Competitor {
   const seedHc: Record<CompetitorPersonality, number> = {
     aggressive: 15, "well-funded": 35, scrappy: 8, enterprise: 22,
   };
-  return {
+  const withOperational: Competitor = {
     ...c,
     personality,
     cash: c.cash ?? seedCash[personality],
     headcount: c.headcount ?? seedHc[personality],
     fundingStage: c.fundingStage ?? "seed",
   };
+  // Hydrate the lifecycle / valuation fields via the shared helper.
+  return hydrateLifecycle(withOperational);
 }
 
 /**
@@ -52,6 +69,10 @@ export function runCompetitorAi(
 
   const nextCompetitors = state.competitors.map(raw => {
     const c = withDefaults(raw);
+    // Skip strategic moves for acquired/dead competitors — they no longer exist as rivals.
+    if (c.stage === "acquired" || c.stage === "dead") {
+      return c;
+    }
 
     // Drift + burn. Better-funded rivals drift upward faster, but burn cash.
     const burn = (c.headcount ?? 10) * 2_500; // ~weekly burn
@@ -220,7 +241,7 @@ function raiseAmountFor(stage: Competitor["fundingStage"]): { amount: number; la
 }
 
 function rotateCategory(cat: ProductCategory, rng: RNG): ProductCategory {
-  const all: ProductCategory[] = ["productivity","dev-tools","analytics","crm","creative","infrastructure"];
+  const all = Object.keys(CATEGORY_INFO) as ProductCategory[];
   return rng.pick(all.filter(c => c !== cat));
 }
 

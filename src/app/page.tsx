@@ -11,6 +11,7 @@ import { WeekRecap } from "@/components/WeekRecap";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
 import { NextMilestone } from "@/components/NextMilestone";
+import { MacroStrip } from "@/components/MacroStrip";
 
 export default function HQPage() {
   const router = useRouter();
@@ -33,6 +34,7 @@ export default function HQPage() {
     <main className="app-shell">
       <HqHeader />
       <KpiGrid />
+      <MacroStrip />
       <NextMilestone />
       <h2 className="sec-head" style={{ marginTop: 18 }}>MRR — last 12 weeks <span className="tag">billing</span></h2>
       <MrrChart />

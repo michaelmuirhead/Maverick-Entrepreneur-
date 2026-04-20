@@ -21,7 +21,7 @@ import { newGame } from "@/game/init";
 
 function product(overrides: Partial<Product> = {}): Product {
   return {
-    id: "p_debt", name: "DebtTest", category: "productivity",
+    id: "p_debt", name: "DebtTest", category: "application", revenueModel: "freemium",
     stage: "launched", version: "1.0",
     health: 70, quality: 70,
     users: { enterprise: 5, smb: 30, selfServe: 120 },
@@ -140,7 +140,7 @@ describe("debt: velocity effect on dev", () => {
   it("dev progress per tick is reduced when debt is high", () => {
     const rng = makeRng("debt-velocity");
     const clean: Product = {
-      id: "pc", name: "Clean", category: "productivity",
+      id: "pc", name: "Clean", category: "application", revenueModel: "freemium",
       stage: "dev", version: "0.1",
       health: 80, quality: 60,
       users: { enterprise: 0, smb: 0, selfServe: 0 }, pricing: derivePricing(12),
@@ -168,7 +168,7 @@ describe("debt: tick integration", () => {
       founderName: "D. Bug",
       archetype: "technical",
       startingCash: "angel-backed",
-      startingCategory: "productivity",
+      startingCategory: "application",
       seed: "debt-tick-seed",
     });
   }
@@ -214,7 +214,7 @@ describe("debt: tick integration", () => {
     const events: GameEvent[] = [];
     const startDebt = 80;
     const p: Product = {
-      id: "p_v", name: "Vee", category: "productivity",
+      id: "p_v", name: "Vee", category: "application", revenueModel: "freemium",
       stage: "launched", version: "1.0",
       health: 60, quality: 60,
       users: { enterprise: 1, smb: 5, selfServe: 20 },

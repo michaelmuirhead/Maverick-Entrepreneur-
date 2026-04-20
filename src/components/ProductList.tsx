@@ -6,12 +6,15 @@ import { blendedMrr, totalUsers } from "@/game/segments";
 import { debtLabel } from "@/game/debt";
 
 const CATEGORY_GLYPH: Record<Product["category"], string> = {
-  productivity: "📝",
-  "dev-tools": "🧰",
-  analytics: "📊",
-  crm: "📇",
-  creative: "🎨",
-  infrastructure: "🗄️",
+  application:    "📱",
+  system:         "🖥️",
+  enterprise:     "🏢",
+  "dev-tools":    "🧰",
+  custom:         "🛠️",
+  embedded:       "📟",
+  "content-media":"🎨",
+  "finance-ops":  "📒",
+  "security-it":  "🛡️",
 };
 
 const STAGE_LABEL: Record<Product["stage"], { label: string; tone: "ok" | "warn" | "bad" | "neutral" }> = {

@@ -3,11 +3,12 @@ import { teamEffects, EMPTY_TEAM, summarizeTeam } from "@/game/roles";
 import type { Employee, Product, GameEvent, SegmentedUsers } from "@/game/types";
 import { advanceProductStage, signupsThisWeek, marketingMultiplier, churnRate } from "@/game/products";
 import { makeRng } from "@/game/rng";
-import { derivePricing, SEGMENT_MIX, ZERO_USERS } from "@/game/segments";
+import { derivePricing, ZERO_USERS } from "@/game/segments";
+import { segmentMixFor } from "@/game/categories";
 
 function seg(n: number): SegmentedUsers {
   if (n <= 0) return { ...ZERO_USERS };
-  const mix = SEGMENT_MIX.productivity;
+  const mix = segmentMixFor("application");
   const ent = Math.round(n * mix.enterprise);
   const smb = Math.round(n * mix.smb);
   return { enterprise: ent, smb, selfServe: Math.max(0, n - ent - smb) };
@@ -27,7 +28,8 @@ function emp(overrides: Partial<Employee> & Pick<Employee, "id" | "role">): Empl
 
 function liveProduct(overrides: Partial<Product> = {}): Product {
   return {
-    id: "p_test", name: "Test", category: "productivity",
+    id: "p_test", name: "Test", category: "application",
+    revenueModel: "freemium",
     stage: "launched", version: "1.0",
     health: 70, quality: 70, users: seg(500), pricing: derivePricing(20),
     devProgress: 100, devBudget: 0, marketingBudget: 0,

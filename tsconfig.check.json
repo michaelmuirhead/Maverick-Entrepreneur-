@@ -1,0 +1,4 @@
+{
+  "extends": "./tsconfig.json",
+  "comment": "Temporary scratch config used for sandbox type-check runs. Safe to delete."
+}
