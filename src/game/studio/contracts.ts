@@ -161,12 +161,14 @@ export function maybeGenerateContractOffer(
   if (!rng.chance(chance)) return null;
 
   // Pick an eligible contract type weighted by commonality.
-  const eligibleTypes: { type: ContractType; weight: number }[] = [
+  // Annotate before .filter so TS doesn't widen the string literals to `string`.
+  const allTypes: { type: ContractType; weight: number }[] = [
     { type: "consulting", weight: 4 },
     { type: "port", weight: 3 },
     { type: "co-dev", weight: 2 },
     { type: "publisher-spec", weight: 1 },
-  ].filter(o => rep >= MIN_REP_FOR_TYPE[o.type]);
+  ];
+  const eligibleTypes = allTypes.filter(o => rep >= MIN_REP_FOR_TYPE[o.type]);
   if (eligibleTypes.length === 0) return null;
 
   const type = rng.weighted(eligibleTypes);
