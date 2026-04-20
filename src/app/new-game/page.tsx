@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useGame } from "@/game/store";
 import { PRODUCT_CATEGORIES, ProductCategory, RevenueModel } from "@/game/types";
@@ -53,6 +53,14 @@ const SCOPE_BLURBS: Record<GameScope, string> = {
 };
 
 export default function NewGamePage() {
+  return (
+    <Suspense fallback={null}>
+      <NewGameInner />
+    </Suspense>
+  );
+}
+
+function NewGameInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const startSaas = useGame(s => s.startNewGame);
