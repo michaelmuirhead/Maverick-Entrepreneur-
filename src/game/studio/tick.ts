@@ -476,7 +476,7 @@ export function tickStudio(state: GameStudioState): GameStudioState {
   ) {
     const hasProfitableShipped =
       games.some(g => !!g.launched && (g.lifetimeRevenue ?? 0) > (g.lifetimeCost ?? 0))
-      || state.archivedGames.some(g => !!g.launched && (g.lifetimeRevenue ?? 0) > (g.lifetimeCost ?? 0));
+      || state.archivedGames.some(g => g.launchedWeek != null && (g.lifetimeRevenue ?? 0) > (g.lifetimeCost ?? 0));
     if (!hasProfitableShipped) {
       events = addEvent(events, {
         id: idGen("evt"),
