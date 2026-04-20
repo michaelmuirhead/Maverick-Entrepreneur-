@@ -1,5 +1,6 @@
 "use client";
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useGame } from "@/game/store";
 import {
   contractTypeLabel, DEFAULT_STUDIO_REPUTATION,
@@ -29,8 +30,16 @@ export function StudioContractsCard() {
     () => contracts.filter(c => c.status === "active"),
     [contracts],
   );
+  // History = anything resolved. Lets the card stay reachable (for the "View all →"
+  // link) even when there are no live offers or active contracts to act on.
+  const history = useMemo(
+    () => contracts.filter(c => c.status === "completed" || c.status === "failed" || c.status === "cancelled" || c.status === "declined"),
+    [contracts],
+  );
 
-  if (open.length === 0 && active.length === 0) return null;
+  // Hide entirely for studios that have never touched contracts at all —
+  // keeps the dashboard minimal for new players.
+  if (contracts.length === 0) return null;
 
   return (
     <div className="themed-card" style={{ padding: "12px 14px", display: "grid", gap: 12, marginTop: 8 }}>
@@ -68,6 +77,33 @@ export function StudioContractsCard() {
           ))}
         </div>
       )}
+
+      {/* History-only fallback — when nothing is open/active, still give players
+          a hint of what this card is and a way into the sub-page. */}
+      {open.length === 0 && active.length === 0 && (
+        <div style={{ fontSize: 11, color: "var(--color-ink-2)", fontStyle: "italic" }}>
+          No current offers. {history.length} past contract{history.length === 1 ? "" : "s"} on record.
+        </div>
+      )}
+
+      {/* Footer: route into the full /studio/contracts sub-page. */}
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        paddingTop: 6, borderTop: "1px dashed var(--color-border-subtle, rgba(0,0,0,.08))",
+      }}>
+        <div style={{ fontSize: 10, color: "var(--color-ink-2)", fontWeight: 600 }}>
+          {history.length > 0 ? `${history.length} in history` : "—"}
+        </div>
+        <Link
+          href="/studio/contracts"
+          style={{
+            fontSize: 11, fontWeight: 700, color: "var(--color-accent)",
+            textDecoration: "none",
+          }}
+        >
+          View all ›
+        </Link>
+      </div>
     </div>
   );
 }
