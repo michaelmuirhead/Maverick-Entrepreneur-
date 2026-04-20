@@ -8,9 +8,11 @@ import { StudioKpiGrid } from "@/components/StudioKpiGrid";
 import { StudioGameList } from "@/components/StudioGameList";
 import { StudioTrendStrip } from "@/components/StudioTrendStrip";
 import { StudioOffersCard } from "@/components/StudioOffersCard";
+import { StudioContractsCard } from "@/components/StudioContractsCard";
 import { StudioEventLog } from "@/components/StudioEventLog";
 import { StudioTabBar } from "@/components/StudioTabBar";
 import { StudioAdvanceButton } from "@/components/StudioAdvanceButton";
+import { FounderSalaryCard } from "@/components/FounderSalaryCard";
 import { capacityDiagnostics } from "@/game/studio/crunch";
 
 /**
@@ -53,6 +55,8 @@ export default function StudioHQPage() {
       <StudioKpiGrid />
       <StudioTrendStrip />
 
+      <FounderSalaryCard />
+
       {cap.overCommitted && (
         <div className="themed-card" style={{ padding: "10px 14px", marginTop: 8, borderColor: "var(--color-warn)" }}>
           <div style={{ fontWeight: 700, fontSize: 13, color: "var(--color-warn)" }}>⚠️ {cap.blurb}</div>
@@ -63,6 +67,7 @@ export default function StudioHQPage() {
       )}
 
       <StudioOffersCard />
+      <StudioContractsCard />
 
       <Link href="/studio/games" className="themed-card" style={{
         display: "grid", gridTemplateColumns: "32px 1fr auto", alignItems: "center", gap: 10,

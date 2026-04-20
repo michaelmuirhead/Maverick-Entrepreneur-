@@ -234,7 +234,10 @@ export const SCOPE_INFO: Record<GameScope, ScopeInfo> = {
     devWeeksMult: 1.0,
     priceMult: 1.0,
     minTeam: 1,
-    weeklyBaseCost: 1_500,
+    // Dropped from $1,500 → $1,200/wk. Matches a scrappy 1-2 person indie
+    // budget more realistically, and keeps lean-start studios viable without
+    // needing to raise a round before shipping their first title.
+    weeklyBaseCost: 1_200,
     reviewExpectationBias: 0,
   },
   AA: {

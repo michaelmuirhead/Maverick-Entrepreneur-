@@ -704,12 +704,17 @@ export interface GameState {
   /** IPO state machine. Optional on legacy saves — defaults to { stage: "none" }. */
   ipo?: IpoState;
 
+  /** Founder's weekly salary drawn from venture cash. Flows to
+   *  `entrepreneur.personalWealth` each tick, gated by available cash. Optional on
+   *  legacy saves — defaults to 0. */
+  founderSalary?: number;
+
   // Game over flags
   gameOver?: { reason: "bankrupt" | "acquired" | "ipo"; week: number; narrative: string };
 
   // Snapshot of deltas from the most recent advanceWeek — populated by the tick
   // so the UI can show an inline week recap without a modal.
-  lastTickDeltas?: { week: number; cash: number; mrr: number; users: number };
+  lastTickDeltas?: { week: number; cash: number; mrr: number; users: number; founderDraw?: number };
 
   // Version for save migrations
   schemaVersion: number;

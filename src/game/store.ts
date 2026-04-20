@@ -37,6 +37,7 @@ import { startCrunch, endCrunch } from "./studio/crunch";
 import { acceptPlatformOffer, respondToReviewBomb } from "./studio/platforms";
 import { queueDlc } from "./studio/live-service";
 import { GENRE_INFO, PLATFORM_INFO } from "./studio/genres";
+import { acceptContract, declineContract } from "./studio/contracts";
 import {
   AnyVentureState,
   ENTREPRENEUR_SCHEMA_VERSION,
@@ -148,6 +149,9 @@ interface GameStore {
 
   // Finance
   acceptFundingOffer: () => void;
+  /** Set the founder's weekly salary on the active venture. Clamped to >= 0.
+   *  The draw is applied during `advance` and routed to `personalWealth`. */
+  setFounderSalary: (amount: number) => void;
   /**
    * Player actively pitches investors. Returns the outcome (offer / reasons passed)
    * AND records the attempt as an event so the EventLog reflects the pitch either way.
@@ -257,6 +261,18 @@ interface GameStore {
     gameId: string,
     quality: "apology" | "compensation" | "rollback",
   ) => void;
+  /** Accept an open contract offer. Player must supply at least the required
+   *  number of engineers/designers; action validates staffing and credits the
+   *  upfront payment. No-op if the offer is expired, already taken, or the
+   *  player's selected staff don't meet minimums. */
+  acceptStudioContract: (
+    offerId: string,
+    engineerIds: string[],
+    designerIds: string[],
+  ) => void;
+  /** Decline an open contract offer. Marks it declined; doesn't remove it from
+   *  history so the UI can still show "you passed on this." */
+  declineStudioContract: (offerId: string) => void;
 }
 
 /** Derive the `state` / `activeStudioVenture` projection from an
@@ -456,13 +472,30 @@ export const useGame = create<GameStore>((set, get) => ({
     } else if (isStudioVenture(active)) {
       tickedVenture = tickStudio(active);
     }
+    // Founder salary — the tick engine already debited the draw from venture
+    // cash and stashed the realized amount in `lastTickDeltas.founderDraw`.
+    // Credit that to `entrepreneur.personalWealth` so the two pots net out.
+    const founderDraw = Math.max(0, tickedVenture.lastTickDeltas?.founderDraw ?? 0);
     const nextE: EntrepreneurState = {
       ...replaceVenture(cur, tickedVenture),
+      personalWealth: cur.personalWealth + founderDraw,
       // Wall-clock week moves in lockstep with the active venture's week
       // count. When multiple ventures coexist we'll revisit this (e.g. tick
       // every venture each week), but for now single-venture parity is fine.
       week: cur.week + 1,
     };
+    const projection = projectActive(nextE);
+    set({ entrepreneur: nextE, ...projection });
+    void saveEntrepreneur(nextE);
+  },
+
+  setFounderSalary: (amount) => {
+    const cur = get().entrepreneur;
+    if (!cur) return;
+    const active = getActiveVenture(cur);
+    if (!active) return;
+    const next: AnyVentureState = { ...active, founderSalary: Math.max(0, Math.round(amount)) };
+    const nextE = replaceVenture(cur, next);
     const projection = projectActive(nextE);
     set({ entrepreneur: nextE, ...projection });
     void saveEntrepreneur(nextE);
@@ -624,9 +657,50 @@ export const useGame = create<GameStore>((set, get) => ({
     applyPlayerAcquisition(s, competitorId, tier)
   ),
 
-  acceptBuyoutOffer: (offerId) => update(set, get, (s) =>
-    acceptPlayerBuyout(s, offerId)
-  ),
+  acceptBuyoutOffer: (offerId) => {
+    // Inline (not using the `update` helper) because on an accepted buyout we
+    // credit the founder's equity-weighted share of the acquisition price to
+    // `entrepreneur.personalWealth` — above the venture boundary.
+    const cur = get().entrepreneur;
+    if (!cur) return;
+    const active = getActiveVenture(cur);
+    if (!active || !isSaasVenture(active)) return;
+
+    const offer = (active.buyoutOffers ?? []).find(o => o.id === offerId);
+    // Found-offer gate mirrors acceptPlayerBuyout's own no-op guards. Compute
+    // the founder payout *before* running the pure function so we capture the
+    // pre-exit equity (the returned state has `gameOver` set and we don't want
+    // to rely on stale struct).
+    const founderEquity = active.employees.find(e => e.role === "founder")?.equity ?? 0;
+    const founderPayout = offer && active.week < offer.expiresWeek && !active.gameOver
+      ? Math.round(founderEquity * offer.price)
+      : 0;
+
+    const nextVenture = acceptPlayerBuyout(active, offerId);
+    if (nextVenture === active) return; // no-op (expired, missing, already over)
+
+    let eventsWithFounder = nextVenture.events;
+    if (founderPayout > 0) {
+      eventsWithFounder = [
+        {
+          id: `ev_${nextVenture.week}_acq_founder_payout`,
+          week: nextVenture.week,
+          severity: "good",
+          message: `Your equity stake cashes out at ${money(founderPayout, { short: true })}. Added to personal wealth — fund your next venture whenever you're ready.`,
+        },
+        ...nextVenture.events,
+      ];
+    }
+    const finalVenture: GameState = { ...nextVenture, events: eventsWithFounder };
+
+    const nextE: EntrepreneurState = {
+      ...replaceVenture(cur, finalVenture),
+      personalWealth: cur.personalWealth + founderPayout,
+    };
+    const projection = projectActive(nextE);
+    set({ entrepreneur: nextE, ...projection });
+    void saveEntrepreneur(nextE);
+  },
 
   declineBuyoutOffer: (offerId) => update(set, get, (s) =>
     declinePlayerBuyout(s, offerId)
@@ -935,42 +1009,80 @@ export const useGame = create<GameStore>((set, get) => ({
   // ==========================================================================
   // IPO
   // ==========================================================================
-  advanceIpo: () => update(set, get, (s) => {
+  advanceIpo: () => {
+    // Inline (not using the `update` helper) because the "priced" stage
+    // transition pays the founder's secondary allocation into
+    // `entrepreneur.personalWealth` — which lives above the venture boundary.
+    const cur = get().entrepreneur;
+    if (!cur) return;
+    const active = getActiveVenture(cur);
+    if (!active || !isSaasVenture(active)) return;
+    const s = active;
+
     const ipo = s.ipo ?? { stage: "none" as IpoStage, stageStartedWeek: 0 };
     // Stage gating:
     //  - none → exploring : requires ipoEligible() ok
     //  - others            : require min dwell in the current stage
     if (ipo.stage === "none") {
       const elig = ipoEligible(s);
-      if (!elig.ok) return s;
+      if (!elig.ok) return;
     } else {
       const dwell = ipoMinDwell(ipo.stage);
-      if (s.week - ipo.stageStartedWeek < dwell) return s;
+      if (s.week - ipo.stageStartedWeek < dwell) return;
     }
     const nextIpo = advanceIpoStage(ipo, s.week);
-    if (nextIpo.stage === ipo.stage) return s;
+    if (nextIpo.stage === ipo.stage) return;
+
     let finance = s.finance;
     let proceeds = nextIpo.proceeds;
+    let founderPayout = 0;
+    // Market cap at pricing — mirror of the proceeds math below.
+    let marketCap = 0;
+
     if (nextIpo.stage === "public") {
       // Booked valuation × 0.2 as free-float raise.
       const mrrAnnual = (s.finance.mrr ?? 0) * 12;
-      proceeds = Math.round(mrrAnnual * 10 * 0.2);
+      marketCap = Math.round(mrrAnnual * 10);
+      proceeds = Math.round(marketCap * 0.2);
       finance = { ...s.finance, cash: s.finance.cash + proceeds };
+
+      // Founder secondary — 20% of the founder's equity stake is sold in the
+      // offering and flows to personal wealth. Lock-up covers the rest.
+      const founderEquity = s.employees.find(e => e.role === "founder")?.equity ?? 0;
+      founderPayout = Math.round(founderEquity * marketCap * 0.2);
     }
-    return {
+
+    const events: typeof s.events = [
+      { id: `ev_${s.week}_ipo_${nextIpo.stage}`, week: s.week,
+        severity: nextIpo.stage === "public" ? "good" : "info",
+        message: nextIpo.stage === "public"
+          ? `IPO priced. ${money(proceeds ?? 0, { short: true })} raised by the company. Lock-up starts now.`
+          : `IPO status advanced to "${nextIpo.stage}." The bankers are on the phone.` },
+      ...s.events,
+    ];
+    if (founderPayout > 0) {
+      events.unshift({
+        id: `ev_${s.week}_ipo_founder_secondary`,
+        week: s.week,
+        severity: "good",
+        message: `You sold a secondary block in the IPO — ${money(founderPayout, { short: true })} hits your personal wealth. The rest of your stake is locked up.`,
+      });
+    }
+
+    const nextVenture: GameState = {
       ...s,
       finance,
       ipo: { ...nextIpo, proceeds },
-      events: [
-        { id: `ev_${s.week}_ipo_${nextIpo.stage}`, week: s.week,
-          severity: nextIpo.stage === "public" ? "good" : "info",
-          message: nextIpo.stage === "public"
-            ? `IPO priced. ${money(proceeds ?? 0, { short: true })} raised. Lock-up starts now.`
-            : `IPO status advanced to "${nextIpo.stage}." The bankers are on the phone.` },
-        ...s.events,
-      ],
+      events,
     };
-  }),
+    const nextE: EntrepreneurState = {
+      ...replaceVenture(cur, nextVenture),
+      personalWealth: cur.personalWealth + founderPayout,
+    };
+    const projection = projectActive(nextE);
+    set({ entrepreneur: nextE, ...projection });
+    void saveEntrepreneur(nextE);
+  },
 
   pitchForRound: () => {
     const s = get().state;
@@ -1001,6 +1113,34 @@ export const useGame = create<GameStore>((set, get) => ({
   createStudioGame: (params) => {
     const cur = get().activeStudioVenture;
     if (!cur) return null;
+    // Lean studios can only juggle one project at a time until they ship
+    // something. The rule reflects the tier fantasy: you're a scrappy
+    // bedroom studio — no bandwidth for parallel greenlights.
+    if (cur.startingTier === "lean") {
+      const inDevCount = cur.games.filter(g =>
+        !g.launched && g.stage !== "released" && g.stage !== "live-service"
+        && g.stage !== "mature" && g.stage !== "sunset"
+      ).length;
+      const hasShipped = cur.games.some(g => !!g.launched)
+        || cur.archivedGames.some(g => !!g.launched);
+      if (inDevCount >= 1 && !hasShipped) {
+        // Refuse. Surface a player-visible event so the UI rejection is legible.
+        studioUpdate(set, get, (s) => ({
+          ...s,
+          events: [
+            {
+              id: `ev_${s.week}_lean_cap_${params.title.slice(0, 12)}_${s.games.length}`,
+              week: s.week,
+              severity: "warn" as const,
+              message: `Lean studios run one project at a time until the first title ships. Finish "${cur.games.find(g => !g.launched)?.title ?? "the current game"}" first, or hire up and change tier.`,
+            },
+            ...s.events,
+          ],
+        }));
+        return null;
+      }
+    }
+
     // Derive the new game id from a seed-scoped RNG so the same save always
     // produces the same ids on replay. Includes project count so back-to-back
     // creations don't collide.
@@ -1235,6 +1375,56 @@ export const useGame = create<GameStore>((set, get) => ({
           message: newBomb
             ? `Issued ${quality} for ${g.title} — ${money(cost, { short: true })} spent. Severity dropping; not yet cleared.`
             : `Issued ${quality} for ${g.title} — ${money(cost, { short: true })} spent. Controversy cleared.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  acceptStudioContract: (offerId, engineerIds, designerIds) => studioUpdate(set, get, (s) => {
+    const contracts = s.contracts ?? [];
+    const offer = contracts.find(c => c.id === offerId);
+    if (!offer) return s;
+    // Only pick staff that currently exist on the employees list. Guards
+    // against stale UI selection if someone quit between render and accept.
+    const presentIds = new Set(s.employees.map(e => e.id));
+    const engIds = engineerIds.filter(id => presentIds.has(id));
+    const desIds = designerIds.filter(id => presentIds.has(id));
+    const result = acceptContract(offer, engIds, desIds, s.week);
+    if (!result) return s;
+    const nextContracts = contracts.map(c => c.id === offerId ? result.contract : c);
+    return {
+      ...s,
+      contracts: nextContracts,
+      finance: { ...s.finance, cash: s.finance.cash + result.upfrontCash },
+      events: [
+        {
+          id: `ev_${s.week}_contract_accept_${offerId}`,
+          week: s.week,
+          severity: "good" as const,
+          message:
+            `Signed contract with ${offer.clientName}: "${offer.title}". $${result.upfrontCash.toLocaleString()} upfront, $${(offer.payout - result.upfrontCash).toLocaleString()} on delivery. Deadline: week ${result.contract.deadlineWeek}.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  declineStudioContract: (offerId) => studioUpdate(set, get, (s) => {
+    const contracts = s.contracts ?? [];
+    const offer = contracts.find(c => c.id === offerId);
+    if (!offer) return s;
+    const declined = declineContract(offer, s.week);
+    if (!declined) return s;
+    return {
+      ...s,
+      contracts: contracts.map(c => c.id === offerId ? declined : c),
+      events: [
+        {
+          id: `ev_${s.week}_contract_decline_${offerId}`,
+          week: s.week,
+          severity: "info" as const,
+          message: `Passed on ${offer.clientName}'s offer for "${offer.title}".`,
         },
         ...s.events,
       ],

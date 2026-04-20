@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useGame } from "@/game/store";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
+import { FounderSalaryCard } from "@/components/FounderSalaryCard";
 import { MrrChart } from "@/components/MrrChart";
 import { getHeadlineStats } from "@/game/tick";
 import { fundingOffer, PitchOutcome } from "@/game/finance";
@@ -44,6 +45,8 @@ export default function FinancePage() {
           MRR {money(stats.mrr)} · Payroll {money(payroll * 4.33)}/mo · Burn ~{money(stats.monthlyBurn)}/mo
         </div>
       </div>
+
+      <FounderSalaryCard />
 
       <h2 className="sec-head" style={{ marginTop: 18 }}>MRR trend</h2>
       <MrrChart />

@@ -23,6 +23,51 @@ export function weeklyPayroll(employees: Employee[]): number {
   return employees.reduce((s, e) => s + e.salary / 52, 0);
 }
 
+/**
+ * Founder-salary morale drag — vertical-agnostic.
+ *
+ * When the founder's weekly draw sits at $0 past week 26, every equity holder
+ * (founder + cofounders) starts feeling it. This is a deliberate pressure knob
+ * for the new Founder Salary feature: if the player never turns on a draw,
+ * equity-holders gradually lose morale even while the company is shipping.
+ *
+ * Applied *after* updateMoraleAndAttrition so it stacks on top of the usual
+ * drift. The drag is small (~0.3/wk) — it's meant to be noticeable over
+ * quarters, not punishing in a single tick. Emits one "equity tension" event
+ * per affected employee per crossing of 60 → caller dedupes if needed.
+ */
+export function applyFounderSalaryDrag(
+  employees: Employee[],
+  ctx: { week: number; founderSalary: number },
+  events: GameEvent[],
+): Employee[] {
+  const UNPAID_THRESHOLD_WEEKS = 26;
+  const DRAG_PER_WEEK = 0.3;
+  if (ctx.founderSalary > 0) return employees;
+  if (ctx.week < UNPAID_THRESHOLD_WEEKS) return employees;
+
+  return employees.map(e => {
+    const isEquityHolder = e.role === "founder" || (e.equity ?? 0) > 0;
+    if (!isEquityHolder) return e;
+    const prevMorale = e.morale;
+    const nextMorale = Math.max(0, prevMorale - DRAG_PER_WEEK);
+    // Fire a one-time "feeling the squeeze" event when we cross 60 going down —
+    // serves as a nudge for the player to turn on the draw.
+    if (prevMorale >= 60 && nextMorale < 60) {
+      events.push({
+        id: `ev_${ctx.week}_founder_unpaid_${e.id}`,
+        week: ctx.week,
+        severity: "warn",
+        message: e.role === "founder"
+          ? `You've been drawing $0/wk for ${ctx.week} weeks. Equity tension: your co-founder is quietly wondering when this becomes sustainable.`
+          : `${e.name} is feeling the unpaid-equity stretch. Morale slipping — turning on a founder salary would help.`,
+        relatedEmployeeId: e.id,
+      });
+    }
+    return { ...e, morale: nextMorale };
+  });
+}
+
 /** Generate a candidate pool of size `n` for the hiring screen. */
 export function generateCandidates(rng: RNG, n: number, week: number): Employee[] {
   const newId = makeIdGen(rng);

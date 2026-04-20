@@ -1,7 +1,7 @@
 import { AcquisitionDeal, ArchivedProduct, Competitor, GameEvent, GameState, Product } from "./types";
 import { makeRng, RNG } from "./rng";
 import { advanceProductStage, agingDecay, signupsThisWeek, maintenanceCost, weeklyRevenue } from "./products";
-import { updateMoraleAndAttrition, weeklyPayroll } from "./team";
+import { applyFounderSalaryDrag, updateMoraleAndAttrition, weeklyPayroll } from "./team";
 import { computeMrr } from "./finance";
 import { updateTrends, demandFor } from "./market";
 import { advanceEconomy, economyChurnMultiplier, economyDemandMultiplier } from "./economy";
@@ -306,11 +306,13 @@ export function advanceWeek(state: GameState): GameState {
   // New revenue stream: government contracts recognize revenue evenly across their term.
   const govRevenue = weeklyGovRevenue(nextGovContracts, nextWeek);
 
-  const weeklyBurn = payroll + maintenance + refactorBurn + officeRent + perkBurn + campaignBurn + partnerBurn + ossBurn;
-  const netChange = (revenue + govRevenue) - weeklyBurn;
+  const opexBurn = payroll + maintenance + refactorBurn + officeRent + perkBurn + campaignBurn + partnerBurn + ossBurn;
+  const netChange = (revenue + govRevenue) - opexBurn;
   let nextCash = state.finance.cash + netChange;
 
-  // Bankruptcy check
+  // Bankruptcy check — operates on opex only. Founder salary is applied after
+  // the bankruptcy check so the founder can't trigger it by drawing from an
+  // already-dead company.
   let nextGameOver: GameState["gameOver"] = state.gameOver;
   if (nextCash < 0 && !nextGameOver) {
     nextGameOver = {
@@ -325,6 +327,19 @@ export function advanceWeek(state: GameState): GameState {
     });
     nextCash = 0;
   }
+
+  // Founder weekly draw. Capped at remaining cash so the founder can never
+  // drive the company negative by paying themselves. The realized amount is
+  // stashed in lastTickDeltas so the store-level `advance` action can credit
+  // `entrepreneur.personalWealth` without the tick needing to know about the
+  // portfolio wrapper.
+  const founderSalaryTarget = Math.max(0, state.founderSalary ?? 0);
+  const founderDraw = nextGameOver ? 0 : Math.min(founderSalaryTarget, Math.max(0, nextCash));
+  nextCash -= founderDraw;
+
+  // Weekly burn reported to the UI includes the founder draw so the finance
+  // history and runway math reflect the true cash outflow.
+  const weeklyBurn = opexBurn + founderDraw;
 
   // 5) Team: morale + attrition (operates on employees post-poaching and
   //    post-archive-release so rivals that flipped someone into notice this tick
@@ -341,7 +356,15 @@ export function advanceWeek(state: GameState): GameState {
     archivedProducts: [...newArchiveEntries, ...(state.archivedProducts ?? [])],
     employees: employeesPostArchive,
   };
-  const nextEmployees = updateMoraleAndAttrition(staged, events, rng);
+  const moraleAdjustedEmployees = updateMoraleAndAttrition(staged, events, rng);
+  // Founder-salary drag: equity holders lose morale over time if no draw is set.
+  // Applied post-attrition so it stacks on the usual drift without short-circuiting
+  // the resignation pathway.
+  const nextEmployees = applyFounderSalaryDrag(
+    moraleAdjustedEmployees,
+    { week: nextWeek, founderSalary: state.founderSalary ?? 0 },
+    events,
+  );
 
   // Events: call out each newly-archived product so the player sees the post-mortem verdict
   //         surface in the news ticker instead of only in the archive page.
@@ -377,6 +400,7 @@ export function advanceWeek(state: GameState): GameState {
     cash: nextCash - state.finance.cash,
     mrr: staged.finance.mrr - state.finance.mrr,
     users: nextUsers - prevUsers,
+    founderDraw,
   };
 
   // Merge any fresh AI-side M&A deals into the running deal history (newest first).

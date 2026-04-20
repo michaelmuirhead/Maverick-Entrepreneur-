@@ -17,8 +17,9 @@ import { initCulture } from "../culture";
 import { initSupport } from "../support";
 import type { Employee, GameEvent } from "../types";
 import { initGenreTrends } from "./platforms";
+import { targetDevWeeksFor } from "./genres";
 import type {
-  GameStudioState, StudioCompanyState, GameScope, GameGenre, CompetitorStudio,
+  GameStudioState, StudioCompanyState, GameScope, GameGenre, CompetitorStudio, Game,
 } from "./types";
 
 // =====================================================================================
@@ -61,9 +62,75 @@ export interface NewStudioConfig {
   seed?: string;
 }
 
+// =====================================================================================
+// Prototype-in-dev seeding
+// =====================================================================================
+
+/**
+ * Flavor titles for the starter prototype. Deterministic per-seed via `rng.pick`.
+ * Genre-agnostic so any signature genre works — these read like "the scrappy
+ * first game a solo/duo studio would be polishing in a spare bedroom."
+ */
+const PROTOTYPE_TITLES = [
+  "Untitled Prototype", "Working Title: Dawn", "Signal Lost", "The Vault",
+  "Paper Lanterns", "Red Line", "Project Hummingbird", "Low Gravity",
+];
+
+/**
+ * Seed a starter game already ~8 weeks into development, assigned to the
+ * cofounder, at indie scope in the studio's signature genre. Exists to kill
+ * the dead-air opening for lean + bootstrapped starts — the player has
+ * something active to tune in the first session instead of a blank slate.
+ */
+function seedStarterPrototype(
+  config: NewStudioConfig,
+  cofounder: Employee,
+  rng: RNG,
+  newId: (prefix: string) => string,
+): Game {
+  const targetWeeks = targetDevWeeksFor(config.signatureGenre, "indie");
+  return {
+    id: newId("g"),
+    title: rng.pick(PROTOTYPE_TITLES),
+    genre: config.signatureGenre,
+    scope: "indie",
+    platforms: ["pc-steam"],
+    stage: "prototype",   // 8 weeks in: past concept (~3wk), mid-prototype
+    version: "0.1",
+
+    devProgress: 0.6,     // 60% through the prototype stage — a milestone is in sight
+    targetDevWeeks: targetWeeks,
+    weeksInStage: 5,      // ~3 weeks in concept + 5 in prototype = 8 total
+    weeksSinceStart: 8,
+    devBudget: 1_200,     // matches tuned indie weeklyBaseCost
+    marketingBudget: 0,   // pre-launch marketing kicks in later
+    assignedEngineers: [cofounder.id],
+
+    quality: 8,           // tiny bit of quality banked from early iteration
+    polish: 0,
+    techDebt: 2,
+    crunchActive: false,
+
+    hype: 3,              // a quiet pre-reveal trickle
+    wishlist: 0,
+    showcaseAppearances: [],
+
+    dlcPipeline: [],
+
+    lifetimeRevenue: 0,
+    lifetimeCost: 1_200 * 8, // 8 weeks of banked dev cost
+    lifetimeDevCost: 1_200 * 8,
+    lifetimeMarketingCost: 0,
+    peakWeeklySales: 0,
+  };
+}
+
 function startingCashAmount(c: NewStudioConfig["startingCash"]): number {
+  // Lean bumped from $35k → $50k to give ~40 weeks of runway at the tuned
+  // indie weekly base (see SCOPE_INFO.indie.weeklyBaseCost). Less brutal but
+  // still materially tighter than bootstrapped.
   switch (c) {
-    case "lean":          return 35_000;
+    case "lean":          return 50_000;
     case "bootstrapped":  return 120_000;
     case "angel-backed":  return 500_000;
   }
@@ -140,19 +207,32 @@ export function newStudio(config: NewStudioConfig): GameStudioState {
       stage: rng.pick(["indie", "growing", "established"] as const),
     });
   }
-  // One AAA heavyweight to add prestige pressure.
+  // One AAA heavyweight to add prestige pressure. They open the game with a
+  // live hit already in the market (shipped 8-24 weeks pre-incorporation, still
+  // selling) so the player feels competitive pressure from day 1 instead of
+  // experiencing the AAA whale as flavor-only for the first year.
   let whale = rng.pick(RIVAL_STUDIO_NAMES);
   while (usedNames.has(whale)) whale = rng.pick(RIVAL_STUDIO_NAMES);
+  const whaleGenre: GameGenre = rng.pick(["fps", "rpg", "strategy"] as const);
+  const whaleFlagshipTitle = rng.pick([
+    "Iron Division", "Nightfall Crown", "Starbreak 2", "Kingdom of Ash",
+    "Red Horizon", "Hollow Empire", "Tide Runner", "Black Halo",
+  ]);
+  const whaleShippedWeek = -rng.int(8, 24);
+  const whaleReviewScore = rng.int(78, 91);
   rivals.push({
     id: newId("rival"),
     name: whale,
-    flagshipGenre: "fps",
+    flagshipGenre: whaleGenre,
     scope: "AAA",
     reputation: rng.int(70, 90),
     aggression: rng.range(0.3, 0.6),
     cash: rng.int(20_000_000, 80_000_000),
     headcount: rng.int(200, 600),
     stage: "established",
+    lastShipWeek: whaleShippedWeek,
+    flagshipTitle: whaleFlagshipTitle,
+    flagshipReviewScore: whaleReviewScore,
   });
 
   const company: StudioCompanyState = {
@@ -164,11 +244,32 @@ export function newStudio(config: NewStudioConfig): GameStudioState {
   };
 
   const cash = startingCashAmount(config.startingCash);
+
+  // Lean + bootstrapped studios open with a starter prototype already ~8 weeks
+  // into dev, assigned to the cofounder. Angel-backed starts get a blank slate
+  // — they've raised a round with the expectation they'll pick an ambitious
+  // opening move, not inherit a side project. See seedStarterPrototype for
+  // rationale.
+  const starterGame = config.startingCash === "angel-backed"
+    ? null
+    : seedStarterPrototype(config, cofounder, rng, newId);
+
   const openingEvent: GameEvent = {
     id: newId("ev"),
     week: 0,
     severity: "good",
-    message: `${config.companyName} is incorporated. First pitch on the board: ${config.signatureGenre}, ${config.defaultScope}.`,
+    message: starterGame
+      ? `${config.companyName} is incorporated. Your prototype "${starterGame.title}" is ${starterGame.weeksSinceStart} weeks in — ${cofounder.name}'s been heads-down on it. Ship it, scale it, or pivot.`
+      : `${config.companyName} is incorporated. First pitch on the board: ${config.signatureGenre}, ${config.defaultScope}.`,
+  };
+
+  // Competitive pressure from day 1: call out the AAA whale's live hit. Gives
+  // the player an immediate sense of the landscape they're walking into.
+  const whaleHitEvent: GameEvent = {
+    id: newId("ev"),
+    week: 0,
+    severity: "info",
+    message: `Market watch: ${whale}'s AAA ${whaleGenre} "${whaleFlagshipTitle}" shipped ${Math.abs(whaleShippedWeek)} weeks ago at a ${rivals.at(-1)!.flagshipReviewScore} Metacritic — still top-10 on Steam charts. That's the bar in ${whaleGenre}.`,
   };
 
   return {
@@ -187,7 +288,7 @@ export function newStudio(config: NewStudioConfig): GameStudioState {
         ? [{ label: "Angel", amount: 500_000, postMoney: 3_000_000, week: 0 }]
         : [],
     },
-    games: [],
+    games: starterGame ? [starterGame] : [],
     archivedGames: [],
     employees: [founder, cofounder],
     competitorStudios: rivals,
@@ -196,10 +297,14 @@ export function newStudio(config: NewStudioConfig): GameStudioState {
     showcases: [],
     platformOffers: [],
     trends: [],
-    events: [openingEvent],
+    events: [whaleHitEvent, openingEvent],
     office: initOffice(),
     culture: initCulture(),
     support: initSupport(),
+    startingTier: config.startingCash,
+    // Angel-backed boards give ~3 years (156 weeks) before they start pressing
+    // for a liquidity event. Other tiers have no deadline.
+    boardDeadlineWeek: config.startingCash === "angel-backed" ? 156 : undefined,
     schemaVersion: 7, // per-venture schema version (matches SaaS SCHEMA_VERSION)
   };
 }

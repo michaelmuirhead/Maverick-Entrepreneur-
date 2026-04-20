@@ -33,6 +33,7 @@ import {
   launchGame, tickPostLaunchSales, nextPostLaunchStage,
 } from "./launch";
 import { applyCrunchTick } from "./crunch";
+import { applyFounderSalaryDrag } from "../team";
 import {
   initLiveService, tickLiveService, tickDlcPipeline,
 } from "./live-service";
@@ -40,6 +41,10 @@ import {
   rollPlatformOffers, expirePlatformOffers,
   tickGenreTrends, maybeIgniteReviewBomb, decayReviewBomb,
 } from "./platforms";
+import {
+  busyEmployeeIds, clampReputation, DEFAULT_STUDIO_REPUTATION,
+  maybeGenerateContractOffer, tickContracts,
+} from "./contracts";
 
 // =====================================================================================
 // Helpers
@@ -103,11 +108,30 @@ export function tickStudio(state: GameStudioState): GameStudioState {
   let events = state.events;
   let culture = state.culture;
   let platformOffers = state.platformOffers;
+  let contracts = state.contracts ?? [];
+  let studioReputation = state.studioReputation ?? DEFAULT_STUDIO_REPUTATION;
+
+  // Engineers assigned to active contracts this week are working off-IP. We
+  // shadow-filter their IDs out of each game's assignment list before running
+  // dev progress, then restore the real list afterward so the player's picks
+  // on the game card aren't clobbered.
+  const busyOnContract = busyEmployeeIds(contracts);
 
   // -----------------------------------------------------------------------------------
   // 1) Dev progress for in-dev games
   // -----------------------------------------------------------------------------------
-  games = games.map(g => (isInDev(g) ? advanceDev(g, rng) : g));
+  games = games.map(g => {
+    if (!isInDev(g)) return g;
+    if (busyOnContract.size === 0) return advanceDev(g, rng);
+    // Shadow-filter: temporarily strip contract-busy engineers from the team so
+    // dev velocity reflects who's *actually* working on the game this week,
+    // then restore the real assignment list so the UI / future ticks are
+    // unchanged.
+    const effectiveAssigned = g.assignedEngineers.filter(id => !busyOnContract.has(id));
+    const shadow: Game = { ...g, assignedEngineers: effectiveAssigned };
+    const advanced = advanceDev(shadow, rng);
+    return { ...advanced, assignedEngineers: g.assignedEngineers };
+  });
 
   // -----------------------------------------------------------------------------------
   // 2) Hype / wishlist tick for all games that are pre-launch or freshly launched
@@ -143,6 +167,19 @@ export function tickStudio(state: GameStudioState): GameStudioState {
         relatedEmployeeId: emp.id,
       });
     }
+  }
+
+  // Founder-salary drag: equity holders (founder + cofounder) lose morale over
+  // time if the player never configures a draw. Applied after crunch so the
+  // two pressures stack without either one masking the other.
+  {
+    const dragEvents: GameEvent[] = [];
+    employees = applyFounderSalaryDrag(
+      employees,
+      { week: weekNow, founderSalary: state.founderSalary ?? 0 },
+      dragEvents,
+    );
+    for (const ev of dragEvents) events = addEvent(events, ev);
   }
   // -----------------------------------------------------------------------------------
   // 4) Genre trend drift
@@ -372,8 +409,17 @@ export function tickStudio(state: GameStudioState): GameStudioState {
     return sum + g.marketingBudget;
   }, 0);
 
-  const totalBurn = Math.round(salaryBurn + devBurn + marketingBurn);
-  finance.cash -= totalBurn;
+  const opexBurn = Math.round(salaryBurn + devBurn + marketingBurn);
+  finance.cash -= opexBurn;
+
+  // Founder weekly draw. Applied after opex but before the bankruptcy check
+  // below — capped at remaining cash so the founder can never be the cause of
+  // bankruptcy. The realized amount is stashed in lastTickDeltas so the
+  // store-level `advance` action can credit `entrepreneur.personalWealth`.
+  const founderSalaryTarget = Math.max(0, state.founderSalary ?? 0);
+  const founderDraw = Math.min(founderSalaryTarget, Math.max(0, finance.cash));
+  finance.cash -= founderDraw;
+  const totalBurn = opexBurn + founderDraw;
 
   // Accumulate on games.
   games = games.map(g => {
@@ -415,6 +461,78 @@ export function tickStudio(state: GameStudioState): GameStudioState {
   }
 
   // -----------------------------------------------------------------------------------
+  // 14b) Angel-backed board deadline — fire the "your investors want an exit"
+  //      warning once, at or past the configured deadline week, when the
+  //      studio hasn't shipped a profitable title yet. Also applies a mild
+  //      morale hit on equity holders so it has teeth beyond flavor.
+  // -----------------------------------------------------------------------------------
+  let boardDeadlineWarned = state.boardDeadlineWarned ?? false;
+  if (
+    !boardDeadlineWarned
+    && state.startingTier === "angel-backed"
+    && state.boardDeadlineWeek != null
+    && weekNow >= state.boardDeadlineWeek
+    && !state.gameOver
+  ) {
+    const hasProfitableShipped =
+      games.some(g => !!g.launched && (g.lifetimeRevenue ?? 0) > (g.lifetimeCost ?? 0))
+      || state.archivedGames.some(g => !!g.launched && (g.lifetimeRevenue ?? 0) > (g.lifetimeCost ?? 0));
+    if (!hasProfitableShipped) {
+      events = addEvent(events, {
+        id: idGen("evt"),
+        week: weekNow,
+        severity: "warn",
+        message:
+          `Board meeting: your angel investors want a path to liquidity. ${state.boardDeadlineWeek} weeks in, no profitable title — they're asking about a sale or a next round. The mood in the room is heavy.`,
+      });
+      // Equity holders feel the pressure — small morale hit, one-time.
+      employees = employees.map(e =>
+        (e.role === "founder" || (e.equity ?? 0) > 0)
+          ? { ...e, morale: Math.max(0, e.morale - 5) }
+          : e,
+      );
+      boardDeadlineWarned = true;
+    }
+  }
+
+  // -----------------------------------------------------------------------------------
+  // 14c) Contract work — advance active contracts, expire stale offers,
+  //      complete or fail on deadline, and roll for a new weekly offer. Cash
+  //      deltas from completion land on finance.cash; reputation deltas update
+  //      studioReputation; failed-contract morale hits apply to the assigned
+  //      staff in a single pass.
+  // -----------------------------------------------------------------------------------
+  {
+    const tickRes = tickContracts(state, weekNow, idGen);
+    contracts = tickRes.contracts;
+    for (const ev of tickRes.events) events = addEvent(events, ev);
+    finance = { ...finance, cash: finance.cash + tickRes.cashDelta };
+    studioReputation = clampReputation(studioReputation + tickRes.repDelta);
+    if (tickRes.moraleHitEmployeeIds.length > 0) {
+      const hitSet = new Set(tickRes.moraleHitEmployeeIds);
+      employees = employees.map(e =>
+        hitSet.has(e.id)
+          ? { ...e, morale: Math.max(0, e.morale - 8) }
+          : e,
+      );
+    }
+
+    // Roll for a new offer this week. Capped internally at MAX_OPEN_OFFERS.
+    const stateForGen: GameStudioState = { ...state, contracts, studioReputation, finance };
+    const newOffer = maybeGenerateContractOffer(stateForGen, rng, idGen);
+    if (newOffer) {
+      contracts = [...contracts, newOffer];
+      events = addEvent(events, {
+        id: idGen("evt"),
+        week: weekNow,
+        severity: "info",
+        message:
+          `New contract offer: ${newOffer.clientName} wants "${newOffer.title}" — $${newOffer.payout.toLocaleString()} over ${newOffer.durationWeeks} wk. Check the Contracts board.`,
+      });
+    }
+  }
+
+  // -----------------------------------------------------------------------------------
   // 15) Advance calendar
   // -----------------------------------------------------------------------------------
   const cal = advanceCalendar(state);
@@ -431,11 +549,15 @@ export function tickStudio(state: GameStudioState): GameStudioState {
     platformOffers,
     genreTrends,
     gameOver,
+    boardDeadlineWarned,
+    contracts,
+    studioReputation,
     lastTickDeltas: {
       week: cal.week,
       cash: cashDelta,
       weeklySales: weeklySalesTotal,
       mau: liveServiceMauTotal,
+      founderDraw,
     },
   };
 }

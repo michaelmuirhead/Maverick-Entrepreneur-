@@ -269,8 +269,15 @@ export interface CompetitorStudio {
   cash: number;
   /** Simulated headcount. */
   headcount: number;
-  /** Week their last game shipped — for cooldown on AI launches. */
+  /** Week their last game shipped — for cooldown on AI launches. Negative
+   *  values represent pre-game history (e.g. shipped 20 weeks before the
+   *  player incorporated). */
   lastShipWeek?: number;
+  /** Name of their most recent hit title. Purely flavor + UI —
+   *  drives the "currently-selling competitor" opening event. */
+  flagshipTitle?: string;
+  /** Review score (0..100) of their flagship. Flavor for UI. */
+  flagshipReviewScore?: number;
   /** Stage in their life. */
   stage: "indie" | "growing" | "established" | "declining" | "acquired" | "dead";
 }
@@ -332,6 +339,82 @@ export interface PlatformDealOffer {
 }
 
 // =====================================================================================
+// Contract work — "work for hire" side business
+// =====================================================================================
+
+/**
+ * Contracts are a side revenue stream for studios. The player accepts work from
+ * external clients — ports, co-dev gigs, publisher-spec games, tools consulting
+ * — and dedicates engineers/designers to deliver it. The trade-off is
+ * opportunity cost: engineers on a contract don't contribute to the studio's
+ * own IP that week. Completing on time pays out and boosts reputation; missing
+ * a deadline cuts pay and damages rep, which gates future offer quality.
+ */
+export type ContractType =
+  | "consulting"        // Short tools/engine gig. 2-6 wk, 1 engineer.
+  | "port"              // Port an existing game to a new platform. 8-16 wk.
+  | "co-dev"            // Build a module/system for another studio. 6-20 wk.
+  | "publisher-spec";   // Full work-for-hire game. 30-60 wk, no IP retained.
+
+export type ContractStatus =
+  | "offered"           // Open offer on the board; can be accepted or declined.
+  | "active"            // Accepted, in progress.
+  | "completed"         // Delivered on time.
+  | "failed"            // Deadline blown; partial pay + rep hit.
+  | "declined"          // Player declined, or the offer expired.
+  | "cancelled";        // Cancelled by player mid-contract (rep hit).
+
+export interface StudioContract {
+  id: ID;
+  type: ContractType;
+  clientName: string;
+  title: string;
+  description: string;
+
+  status: ContractStatus;
+
+  // --- Timing ---------------------------------------------------------------
+  offeredWeek: number;
+  /** Offer auto-declines after this week if not accepted. */
+  expiresWeek: number;
+  /** Weeks of work required to complete, once accepted. */
+  durationWeeks: number;
+  /** Set when accepted: offeredWeek → acceptedWeek. */
+  acceptedWeek?: number;
+  /** Set when accepted: hard deadline. Miss it → fail. Includes a small grace window over duration. */
+  deadlineWeek?: number;
+  /** Set when the contract enters a terminal status. */
+  resolvedWeek?: number;
+
+  // --- Work -----------------------------------------------------------------
+  /** Headcount required each week. */
+  requiredEngineers: number;
+  requiredDesigners: number;
+  /** 0..1 — accumulated progress. Increments each fully-staffed week. */
+  progress: number;
+  /** Weeks the contract was understaffed (used for flavor in completion events). */
+  weeksUnderstaffed: number;
+
+  // --- Assignment -----------------------------------------------------------
+  assignedEngineerIds: ID[];
+  assignedDesignerIds: ID[];
+
+  // --- Financials -----------------------------------------------------------
+  /** Total contract value. */
+  payout: number;
+  /** 0..1 — fraction paid on accept. Rest paid at completion. */
+  upfrontFraction: number;
+  /** Cash already received. */
+  paidToDate: number;
+
+  // --- Reputation impact ----------------------------------------------------
+  /** Bump to studio rep on successful completion. */
+  repOnSuccess: number;
+  /** Penalty to studio rep on failure. */
+  repOnFailure: number;
+}
+
+// =====================================================================================
 // Top-level studio state
 // =====================================================================================
 
@@ -383,9 +466,36 @@ export interface GameStudioState {
   support?: SupportState;
   ipo?: IpoState;
 
+  /** Founder's weekly salary drawn from venture cash. Flows to
+   *  `entrepreneur.personalWealth` each tick, gated by available cash. Optional on
+   *  legacy saves — defaults to 0. */
+  founderSalary?: number;
+
+  /** Which tier the studio started at. Drives ongoing constraints:
+   *  - "lean": hard cap of 1 in-dev game until the first shipped title
+   *  - "angel-backed": board expects an exit/raise by `boardDeadlineWeek`
+   *  Optional on legacy saves — absent means "bootstrapped" (no constraints). */
+  startingTier?: "lean" | "bootstrapped" | "angel-backed";
+
+  /** Week the angel-backed board's patience runs out. Event fires at this week
+   *  if the studio hasn't shipped a profitable title / been acquired / IPO'd. */
+  boardDeadlineWeek?: number;
+
+  /** Set once the board-deadline warning has fired, so we don't re-fire it. */
+  boardDeadlineWarned?: boolean;
+
+  /** Contract work — offered, active, and historical contracts all live in one list,
+   *  filtered by `status`. Optional on legacy saves — defaults to []. */
+  contracts?: StudioContract[];
+
+  /** Studio reputation with publishers / external clients. 0..100, starts at 50.
+   *  Gates which contract types get offered; rises on successful delivery, falls
+   *  on failure. Optional on legacy saves — defaults to 50. */
+  studioReputation?: number;
+
   gameOver?: { reason: "bankrupt" | "acquired" | "ipo"; week: number; narrative: string };
 
-  lastTickDeltas?: { week: number; cash: number; weeklySales: number; mau: number };
+  lastTickDeltas?: { week: number; cash: number; weeklySales: number; mau: number; founderDraw?: number };
 
   schemaVersion: number;
 }
