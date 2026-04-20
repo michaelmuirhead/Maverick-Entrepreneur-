@@ -273,6 +273,14 @@ interface GameStore {
   /** Decline an open contract offer. Marks it declined; doesn't remove it from
    *  history so the UI can still show "you passed on this." */
   declineStudioContract: (offerId: string) => void;
+  /** Hire a candidate onto the active studio. Charges one week of salary as
+   *  onboarding; no-op if cash is short. Candidate keeps its ID so the pool UI
+   *  reflects the hire immediately. */
+  hireStudioCandidate: (candidate: Employee) => void;
+  /** Let go an employee from the active studio. Pulls them off every game's
+   *  assignedEngineers/assignedDesigners list and off any active contract
+   *  staffing lists. Founder is protected. */
+  fireStudioEmployee: (id: string) => void;
 }
 
 /** Derive the `state` / `activeStudioVenture` projection from an
@@ -1427,6 +1435,60 @@ export const useGame = create<GameStore>((set, get) => ({
           week: s.week,
           severity: "info" as const,
           message: `Passed on ${offer.clientName}'s offer for "${offer.title}".`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  hireStudioCandidate: (c) => studioUpdate(set, get, (s) => {
+    const salary = c.salary || salaryFor(c.role, c.level);
+    // One week of salary as onboarding cost — same mechanic as the SaaS hire.
+    const onboarding = Math.round(salary / 52);
+    if (s.finance.cash < onboarding) return s;
+    const newEmp: Employee = { ...c, salary, hiredWeek: s.week };
+    return {
+      ...s,
+      employees: [...s.employees, newEmp],
+      finance: { ...s.finance, cash: s.finance.cash - onboarding },
+      events: [
+        {
+          id: `ev_${s.week}_studio_hired_${c.id}`,
+          week: s.week,
+          severity: "good" as const,
+          message: `Hired ${c.name} as ${c.role} at $${salary.toLocaleString()}/yr. Welcome to the studio.`,
+        },
+        ...s.events,
+      ],
+    };
+  }),
+
+  fireStudioEmployee: (id) => studioUpdate(set, get, (s) => {
+    const e = s.employees.find(x => x.id === id);
+    if (!e || e.role === "founder") return s;
+    // Pull the departing employee off every game's staffing lists and every
+    // active contract's assigned-staff lists so downstream systems don't
+    // keep counting them for velocity or deadlines.
+    return {
+      ...s,
+      employees: s.employees.filter(x => x.id !== id),
+      // Games only track engineer assignments; designers flow into dev via the
+      // studio's overall designer pool, so there's no per-game list to scrub.
+      games: s.games.map(g => ({
+        ...g,
+        assignedEngineers: g.assignedEngineers.filter(x => x !== id),
+      })),
+      contracts: (s.contracts ?? []).map(c => c.status === "active" ? {
+        ...c,
+        assignedEngineerIds: c.assignedEngineerIds.filter(x => x !== id),
+        assignedDesignerIds: c.assignedDesignerIds.filter(x => x !== id),
+      } : c),
+      events: [
+        {
+          id: `ev_${s.week}_studio_fired_${id}`,
+          week: s.week,
+          severity: "warn" as const,
+          message: `Let ${e.name} go. Severance handled; morale took a small hit.`,
         },
         ...s.events,
       ],
