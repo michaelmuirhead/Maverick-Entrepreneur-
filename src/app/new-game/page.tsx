@@ -81,10 +81,11 @@ export default function NewGamePage() {
     };
     if (vertical === "saas") {
       startSaas({ ...base, startingCategory: cat });
+      router.replace("/");
     } else {
       startStudio({ ...base, signatureGenre: genre, defaultScope: scope });
+      router.replace("/studio");
     }
-    router.replace("/");
   };
 
   return (

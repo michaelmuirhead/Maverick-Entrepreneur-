@@ -16,12 +16,15 @@ import { MacroStrip } from "@/components/MacroStrip";
 
 export default function HQPage() {
   const router = useRouter();
-  const { state, hydrated, hydrate } = useGame();
+  const { state, activeStudioVenture, entrepreneur, hydrated, hydrate } = useGame();
 
   useEffect(() => { if (!hydrated) void hydrate(); }, [hydrated, hydrate]);
   useEffect(() => {
-    if (hydrated && !state) router.replace("/new-game");
-  }, [hydrated, state, router]);
+    if (!hydrated) return;
+    if (!entrepreneur) { router.replace("/new-game"); return; }
+    // Active venture is a studio — bounce to /studio. `/` stays the SaaS HQ.
+    if (activeStudioVenture && !state) router.replace("/studio");
+  }, [hydrated, entrepreneur, state, activeStudioVenture, router]);
 
   if (!state) {
     return (
