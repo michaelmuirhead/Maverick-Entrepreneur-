@@ -1121,8 +1121,10 @@ export const useGame = create<GameStore>((set, get) => ({
         !g.launched && g.stage !== "released" && g.stage !== "live-service"
         && g.stage !== "mature" && g.stage !== "sunset"
       ).length;
+      // Archived games don't carry a `launched` flag — they have `launchedWeek`
+      // set iff they actually shipped before being sunset (some are cancelled).
       const hasShipped = cur.games.some(g => !!g.launched)
-        || cur.archivedGames.some(g => !!g.launched);
+        || cur.archivedGames.some(g => g.launchedWeek != null);
       if (inDevCount >= 1 && !hasShipped) {
         // Refuse. Surface a player-visible event so the UI rejection is legible.
         studioUpdate(set, get, (s) => ({
