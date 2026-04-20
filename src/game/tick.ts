@@ -11,7 +11,9 @@ import { teamEffects } from "./roles";
 import { applySegmentChanges, blendedMrr, partitionSignups, totalUsers } from "./segments";
 import { buildArchiveEntry } from "./archive";
 import { debtDriftPostLaunch, debtGainFromDev, debtGainFromVNext, isRefactorActive, refactorProgress, refactorWeeklyCost } from "./debt";
-import { advanceCompetitorLifecycle, runAiMandA } from "./mergers";
+import {
+  advanceCompetitorLifecycle, expireBuyoutOffers, rollPlayerBuyoutOffers, runAiMandA,
+} from "./mergers";
 import { officeProductivity, resolvePendingUpgrade, weeklyOfficeCost } from "./office";
 import { perkAttritionMultiplier, recomputeCultureScore, weeklyPerkCost } from "./culture";
 import { campaignMultiplierForProduct, dropExpired, weeklyCampaignBurn } from "./campaigns";
@@ -103,6 +105,22 @@ export function advanceWeek(state: GameState): GameState {
     events, rng,
   );
   const nextCompetitors = competitorsPostMna;
+
+  // 2d) Incoming buyout offers — AI rivals occasionally try to acquire the PLAYER.
+  //     Expire stale offers first, then maybe generate a new one from a cash-rich suitor.
+  const offersAfterExpire = expireBuyoutOffers(
+    { ...state, week: nextWeek, buyoutOffers: state.buyoutOffers ?? [] },
+    events,
+  );
+  const nextBuyoutOffers = rollPlayerBuyoutOffers(
+    {
+      ...state,
+      week: nextWeek,
+      buyoutOffers: offersAfterExpire,
+      competitors: nextCompetitors,
+    },
+    events, rng,
+  );
 
   // 3) Product simulation: signups, churn, health decay, stage transitions
   const nextProducts: Product[] = state.products.map((p) => {
@@ -405,6 +423,7 @@ export function advanceWeek(state: GameState): GameState {
     quarter: quarterFromWeek,
     competitors: nextCompetitors,
     deals: mergedDeals,
+    buyoutOffers: nextBuyoutOffers,
     trends: nextTrends,
     economy: nextEconomy,
     employees: nextEmployees,

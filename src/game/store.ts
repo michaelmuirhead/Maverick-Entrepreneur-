@@ -15,7 +15,7 @@ import { ZERO_USERS, derivePricing } from "./segments";
 import { revenueModelFor } from "./categories";
 import { buildArchiveEntry } from "./archive";
 import { isRefactorActive, refactorWeeklyCost } from "./debt";
-import { applyPlayerAcquisition } from "./mergers";
+import { acceptPlayerBuyout, applyPlayerAcquisition, declinePlayerBuyout } from "./mergers";
 import { teamEffects } from "./roles";
 import { OFFICE_TIERS, canUpgradeTo, upgradeCost } from "./office";
 import { PERKS, recomputeCultureScore } from "./culture";
@@ -82,6 +82,18 @@ interface GameStore {
   /** Add a brand-new venture into the portfolio (any kind) and make it active.
    *  Caller is responsible for constructing the venture state. */
   addVenture: (venture: AnyVentureState) => void;
+  /**
+   * Found a new SaaS venture using personal wealth as seed capital. The
+   * invested amount is deducted from `entrepreneur.personalWealth` and becomes
+   * the new venture's starting cash. No-ops if:
+   *   - No entrepreneur exists yet (use `startNewGame` for the first venture).
+   *   - `invest` exceeds available personal wealth.
+   *   - `invest` is non-positive.
+   * Returns the id of the new venture on success; `null` otherwise.
+   */
+  foundAdditionalSaas: (config: NewGameConfig, invest: number) => string | null;
+  /** Symmetric to `foundAdditionalSaas` for the Game Studio vertical. */
+  foundAdditionalStudio: (config: NewStudioConfig, invest: number) => string | null;
   resetGame: () => void;
   loadExternalSave: (state: GameState | EntrepreneurState) => void;
 
@@ -112,6 +124,19 @@ interface GameStore {
    * player's portfolio. If they reject, a 6-week cooldown is set.
    */
   attemptAcquisition: (competitorId: string, tier: OfferTier) => void;
+
+  /**
+   * Accept an incoming buyout offer from an AI competitor. Cash is credited,
+   * a completed deal is recorded, and the game enters a "game-over-via-success"
+   * state with reason `"acquired"`. Irreversible — the only way back is to
+   * start a new venture.
+   */
+  acceptBuyoutOffer: (offerId: string) => void;
+  /**
+   * Decline an incoming buyout offer. The offer is removed and the suitor goes
+   * into a long cooldown before they'll try again.
+   */
+  declineBuyoutOffer: (offerId: string) => void;
 
   // Team actions
   hireCandidate: (candidate: Employee) => void;
@@ -344,6 +369,63 @@ export const useGame = create<GameStore>((set, get) => ({
     void saveEntrepreneur(next);
   },
 
+  foundAdditionalSaas: (config, invest) => {
+    const cur = get().entrepreneur;
+    if (!cur) return null;
+    const amount = Math.floor(invest);
+    if (!(amount > 0)) return null;
+    if (amount > cur.personalWealth) return null;
+    // Force a unique seed so we never collide with an existing venture even
+    // if the caller reused a company name.
+    const seed = config.seed && !cur.ventures.some(v => v.seed === config.seed)
+      ? config.seed
+      : `saas-${Date.now().toString(36)}-${cur.ventures.length}`;
+    const built = newGame({ ...config, seed });
+    // Overwrite the tier-based starting cash with the player's chosen
+    // personal-wealth investment. Everything else from `newGame` (products,
+    // employees, economy seed, etc.) is preserved.
+    const venture: GameState = {
+      ...built,
+      finance: { ...built.finance, cash: amount },
+    };
+    const next: EntrepreneurState = {
+      ...cur,
+      personalWealth: cur.personalWealth - amount,
+      ventures: [...cur.ventures, venture],
+      activeVentureId: venture.seed,
+    };
+    const projection = projectActive(next);
+    set({ entrepreneur: next, ...projection });
+    void saveEntrepreneur(next);
+    return venture.seed;
+  },
+
+  foundAdditionalStudio: (config, invest) => {
+    const cur = get().entrepreneur;
+    if (!cur) return null;
+    const amount = Math.floor(invest);
+    if (!(amount > 0)) return null;
+    if (amount > cur.personalWealth) return null;
+    const seed = config.seed && !cur.ventures.some(v => v.seed === config.seed)
+      ? config.seed
+      : `studio-${Date.now().toString(36)}-${cur.ventures.length}`;
+    const built = newStudio({ ...config, seed });
+    const venture: GameStudioState = {
+      ...built,
+      finance: { ...built.finance, cash: amount },
+    };
+    const next: EntrepreneurState = {
+      ...cur,
+      personalWealth: cur.personalWealth - amount,
+      ventures: [...cur.ventures, venture],
+      activeVentureId: venture.seed,
+    };
+    const projection = projectActive(next);
+    set({ entrepreneur: next, ...projection });
+    void saveEntrepreneur(next);
+    return venture.seed;
+  },
+
   resetGame: () => {
     set({ entrepreneur: null, state: null, activeStudioVenture: null });
     void saveEntrepreneur(null);
@@ -542,6 +624,14 @@ export const useGame = create<GameStore>((set, get) => ({
     applyPlayerAcquisition(s, competitorId, tier)
   ),
 
+  acceptBuyoutOffer: (offerId) => update(set, get, (s) =>
+    acceptPlayerBuyout(s, offerId)
+  ),
+
+  declineBuyoutOffer: (offerId) => update(set, get, (s) =>
+    declinePlayerBuyout(s, offerId)
+  ),
+
   hireCandidate: (c) => update(set, get, (s) => {
     const salary = c.salary || salaryFor(c.role, c.level);
     // Hiring costs 1 week salary in one-time onboarding/setup
@@ -650,7 +740,7 @@ export const useGame = create<GameStore>((set, get) => ({
       office: {
         tier: current,
         sinceWeek,
-        pendingUpgrade: { toTier: target, startedWeek: s.week, readyWeek: s.week + weeks },
+        pendingUpgrade: { toTier: target, startedWeek: s.week, readyWeek: s.week + weeks, buildOutCost: cash },
       },
       events: [
         { id: `ev_${s.week}_office_${target}`, week: s.week, severity: "info",

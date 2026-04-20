@@ -13,6 +13,7 @@ import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
 import { NextMilestone } from "@/components/NextMilestone";
 import { MacroStrip } from "@/components/MacroStrip";
+import { BuyoutOffersCard } from "@/components/BuyoutOffersCard";
 
 export default function HQPage() {
   const router = useRouter();
@@ -37,6 +38,7 @@ export default function HQPage() {
   return (
     <main className="app-shell">
       <HqHeader />
+      <BuyoutOffersCard compact />
       <KpiGrid />
       <MacroStrip />
       <NextMilestone />
@@ -61,12 +63,20 @@ export default function HQPage() {
       <WeekRecap />
       <EventLog limit={6} />
 
-      {state.gameOver && (
-        <div className="themed-card" style={{ padding: 16, marginTop: 18, borderColor: "var(--color-bad)" }}>
-          <div style={{ fontWeight: 700, color: "var(--color-bad)", fontSize: 16 }}>Game over: {state.gameOver.reason}</div>
-          <div style={{ marginTop: 6, color: "var(--color-ink-2)" }}>{state.gameOver.narrative}</div>
-        </div>
-      )}
+      {state.gameOver && (() => {
+        const success = state.gameOver.reason !== "bankrupt";
+        const accent = success ? "var(--color-good)" : "var(--color-bad)";
+        const heading =
+          state.gameOver.reason === "acquired" ? "🎉 Exit: you got acquired"
+            : state.gameOver.reason === "ipo"  ? "🔔 Exit: you rang the bell"
+            : "💀 Game over: bankrupt";
+        return (
+          <div className="themed-card" style={{ padding: 16, marginTop: 18, borderColor: accent, borderWidth: 4 }}>
+            <div style={{ fontWeight: 700, color: accent, fontSize: 16 }}>{heading}</div>
+            <div style={{ marginTop: 6, color: "var(--color-ink-2)", lineHeight: 1.5 }}>{state.gameOver.narrative}</div>
+          </div>
+        );
+      })()}
 
       <AdvanceButton />
       <TabBar />

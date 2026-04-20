@@ -1,16 +1,17 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useGame } from "@/game/store";
-import { TabBar } from "@/components/TabBar";
+import { ActiveTabBar } from "@/components/ActiveTabBar";
 import { useTheme } from "@/components/ThemeProvider";
 import { exportSaveJSON, importSaveJSON } from "@/lib/storage";
-import { ENTREPRENEUR_SCHEMA_VERSION } from "@/game/entrepreneur";
+import { ENTREPRENEUR_SCHEMA_VERSION, activeVentureCount } from "@/game/entrepreneur";
+import { money } from "@/lib/format";
 
 export default function SettingsPage() {
   const router = useRouter();
   const entrepreneur = useGame(s => s.entrepreneur);
-  const state = useGame(s => s.state);
   const hydrate = useGame(s => s.hydrate);
   const hydrated = useGame(s => s.hydrated);
   const reset = useGame(s => s.resetGame);
@@ -75,6 +76,26 @@ export default function SettingsPage() {
         }}>{flash.msg}</div>
       )}
 
+      {entrepreneur && (
+        <>
+          <h2 className="sec-head" style={{ marginTop: 18 }}>Portfolio</h2>
+          <Link href="/portfolio" className="themed-card" style={{
+            display: "grid", gridTemplateColumns: "32px 1fr auto",
+            alignItems: "center", gap: 10, padding: "12px 14px",
+            textDecoration: "none",
+          }}>
+            <div style={{ fontSize: 22, lineHeight: 1 }}>🗂️</div>
+            <div>
+              <div style={{ fontWeight: 700, fontSize: 14 }}>Portfolio &amp; ventures</div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>
+                {activeVentureCount(entrepreneur)} active · {entrepreneur.ventures.length} total · personal wealth {money(entrepreneur.personalWealth, { short: true })}
+              </div>
+            </div>
+            <span className="mono" style={{ fontSize: 14, color: "var(--color-ink-2)" }}>›</span>
+          </Link>
+        </>
+      )}
+
       <h2 className="sec-head" style={{ marginTop: 18 }}>Theme</h2>
       <div className="themed-card" style={{ padding: 14 }}>
         <p style={{ margin: "0 0 10px", fontSize: 13, color: "var(--color-ink-2)" }}>
@@ -111,12 +132,12 @@ export default function SettingsPage() {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
           <button
             onClick={doExport}
-            disabled={!state}
+            disabled={!entrepreneur}
             className="themed-card"
             style={{
               padding: 12, fontWeight: 700,
-              background: state ? "var(--color-accent)" : "var(--color-muted)",
-              color: "#fff", opacity: state ? 1 : 0.5, cursor: state ? "pointer" : "not-allowed",
+              background: entrepreneur ? "var(--color-accent)" : "var(--color-muted)",
+              color: "#fff", opacity: entrepreneur ? 1 : 0.5, cursor: entrepreneur ? "pointer" : "not-allowed",
             }}
           >Export save</button>
           <button
@@ -136,9 +157,9 @@ export default function SettingsPage() {
             }}
           />
         </div>
-        {state && (
+        {entrepreneur && (
           <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 10 }}>
-            Current: {state.company.name} · W{state.week} · seed <span style={{ userSelect: "all" }}>{state.seed}</span>
+            Current: {entrepreneur.founderName} · portfolio W{entrepreneur.week} · {entrepreneur.ventures.length} venture{entrepreneur.ventures.length === 1 ? "" : "s"}
           </div>
         )}
       </div>
@@ -178,7 +199,7 @@ export default function SettingsPage() {
         </div>
       </div>
 
-      <TabBar />
+      <ActiveTabBar />
     </main>
   );
 }

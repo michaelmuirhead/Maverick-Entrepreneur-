@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useGame } from "@/game/store";
 import { TabBar } from "@/components/TabBar";
 import { AdvanceButton } from "@/components/AdvanceButton";
+import { BuyoutOffersCard } from "@/components/BuyoutOffersCard";
 import { PRODUCT_CATEGORIES, type Competitor, type OfferTier } from "@/game/types";
 import { demandFor } from "@/game/market";
 import { pressureOn } from "@/game/competitors";
@@ -25,7 +26,14 @@ export default function MarketPage() {
     <main className="app-shell" style={{ paddingTop: "calc(16px + var(--safe-top))" }}>
       <h1 style={{ fontSize: 22, fontWeight: 700, margin: "8px 4px", fontFamily: "var(--font-display)" }}>Market</h1>
 
-      <h2 className="sec-head">Active trends <span className="tag">{state.trends.length}</span></h2>
+      {(state.buyoutOffers?.length ?? 0) > 0 && (
+        <>
+          <h2 className="sec-head">Inbound buyout offers <span className="tag">{state.buyoutOffers!.length}</span></h2>
+          <BuyoutOffersCard />
+        </>
+      )}
+
+      <h2 className="sec-head" style={{ marginTop: 18 }}>Active trends <span className="tag">{state.trends.length}</span></h2>
       <div className="themed-card">
         {state.trends.length === 0 ? (
           <div style={{ padding: 14, color: "var(--color-ink-2)" }}>No major shifts this week. The calm before the boom.</div>

@@ -305,6 +305,9 @@ export interface Competitor {
   lastOfferWeek?: number;
   /** Player cannot re-approach before this week if the last bid was rejected. */
   rejectedOfferUntil?: number;
+  /** If this competitor previously offered to buy the player and was declined,
+   *  they won't pitch again until this week. */
+  rejectedBuyoutUntil?: number;
   /** Number of weeks the competitor has been in the red (cash < 0 tolerance). */
   distressWeeks?: number;
 }
@@ -340,6 +343,33 @@ export interface AcquisitionDeal {
   earnoutPortion?: number;
   integrationDamage?: number;
   antitrustBlocked?: boolean;
+}
+
+/**
+ * An unsolicited buyout offer *to the player* from an AI competitor.
+ * Generated during the weekly tick when a cash-rich rival decides the player
+ * is a strategic target. Expires if not acted on before `expiresWeek`. The
+ * player can either accept (triggers game-over-via-success with an "acquired"
+ * reason) or decline (cooldown on that acquirer). Multiple offers can be
+ * active at once — rival bidders occasionally show up within a few weeks.
+ */
+export interface BuyoutOffer {
+  id: ID;
+  /** Week the offer was generated. */
+  week: number;
+  /** Week at which the offer lapses if the player hasn't acted. Exclusive. */
+  expiresWeek: number;
+  /** The acquirer — a competitor id. */
+  acquirerId: ID;
+  acquirerName: string;
+  /** The player's fair valuation at the time of the offer — audit trail for the UI. */
+  fairValuation: number;
+  /** Total cash consideration offered at close. */
+  price: number;
+  /** Ratio of price to fair valuation (always > 1 in practice — why bother below fair). */
+  premiumMultiple: number;
+  /** One-liner the UI renders. */
+  narrative: string;
 }
 
 export type MarketTrendKind =
@@ -644,6 +674,10 @@ export interface GameState {
   competitors: Competitor[];
   /** Completed acquisitions. Most recent first, capped. */
   deals: AcquisitionDeal[];
+  /** Active unsolicited buyout offers aimed at the player. Optional on legacy
+   *  saves — defaults to [] at tick time. Pruned when offers expire or on
+   *  accept/decline. */
+  buyoutOffers?: BuyoutOffer[];
   trends: MarketTrend[];
   /** Macro-economic phase (boom/stable/recession) and its ramping intensity. */
   economy: EconomyState;

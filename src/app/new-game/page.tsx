@@ -1,6 +1,6 @@
 "use client";
-import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useGame } from "@/game/store";
 import { PRODUCT_CATEGORIES, ProductCategory, RevenueModel } from "@/game/types";
 import { GENRE_INFO, GENRE_ORDER, SCOPE_INFO } from "@/game/studio/genres";
@@ -54,14 +54,32 @@ const SCOPE_BLURBS: Record<GameScope, string> = {
 
 export default function NewGamePage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const startSaas = useGame(s => s.startNewGame);
   const startStudio = useGame(s => s.startNewStudio);
+  const foundAdditionalSaas = useGame(s => s.foundAdditionalSaas);
+  const foundAdditionalStudio = useGame(s => s.foundAdditionalStudio);
+  const entrepreneur = useGame(s => s.entrepreneur);
 
-  const [vertical, setVertical] = useState<Vertical>("saas");
+  // `mode=add` → founding an additional venture out of personal wealth. The
+  // existing entrepreneur is kept; we just append a new venture. Default mode
+  // is "new" which starts a fresh entrepreneur (overwriting any existing save).
+  const mode: "new" | "add" = searchParams?.get("mode") === "add" && entrepreneur
+    ? "add"
+    : "new";
+
+  const preselectedVertical = searchParams?.get("vertical") as Vertical | null;
+  const [vertical, setVertical] = useState<Vertical>(
+    preselectedVertical === "game-studio" || preselectedVertical === "saas"
+      ? preselectedVertical
+      : "saas",
+  );
 
   // Shared fields
   const [companyName, setCompanyName] = useState("Maverick Labs");
-  const [founderName, setFounderName] = useState("");
+  const [founderName, setFounderName] = useState(
+    mode === "add" && entrepreneur ? entrepreneur.founderName : "",
+  );
   const [arch, setArch] = useState<Arch>("technical");
   const [cash, setCash] = useState<Cash>("bootstrapped");
 
@@ -72,6 +90,39 @@ export default function NewGamePage() {
   const [genre, setGenre] = useState<GameGenre>("rpg");
   const [scope, setScope] = useState<GameScope>("indie");
 
+  // Add-mode investment from personal wealth. Default to the midpoint between
+  // the minimum seed capital and the player's available wealth so the slider
+  // lands on a sensible figure first render.
+  const personalWealth = entrepreneur?.personalWealth ?? 0;
+  const minSeed = vertical === "saas" ? 25_000 : 35_000;
+  const [invest, setInvest] = useState<number>(0);
+  useEffect(() => {
+    if (mode !== "add") return;
+    // Re-seed the invest slider whenever the vertical (or personalWealth)
+    // changes — the minimums differ across verticals.
+    const cap = Math.max(minSeed, personalWealth);
+    const start = Math.min(
+      Math.max(minSeed, Math.round(personalWealth * 0.5)),
+      cap,
+    );
+    setInvest(start);
+  }, [mode, vertical, minSeed, personalWealth]);
+
+  // In add-mode, block verticals that the player can't afford even at their
+  // minimum seed level. Prevents the submit button from being clickable into a
+  // no-op.
+  const canAffordSaas = mode === "new" || personalWealth >= 25_000;
+  const canAffordStudio = mode === "new" || personalWealth >= 35_000;
+  const canAffordCurrent = vertical === "saas" ? canAffordSaas : canAffordStudio;
+  const investValid = mode === "new"
+    ? true
+    : invest >= minSeed && invest <= personalWealth;
+
+  const submitLabel = useMemo(() => {
+    if (mode === "add") return vertical === "saas" ? "Fund the new SaaS" : "Open the new studio";
+    return vertical === "saas" ? "Incorporate & begin" : "Open the studio";
+  }, [mode, vertical]);
+
   const submit = () => {
     const base = {
       companyName: companyName.trim() || "Maverick Labs",
@@ -79,6 +130,19 @@ export default function NewGamePage() {
       archetype: arch,
       startingCash: cash,
     };
+    if (mode === "add") {
+      if (!investValid) return;
+      if (vertical === "saas") {
+        const id = foundAdditionalSaas({ ...base, startingCategory: cat }, invest);
+        if (!id) return;
+        router.replace("/");
+      } else {
+        const id = foundAdditionalStudio({ ...base, signatureGenre: genre, defaultScope: scope }, invest);
+        if (!id) return;
+        router.replace("/studio");
+      }
+      return;
+    }
     if (vertical === "saas") {
       startSaas({ ...base, startingCategory: cat });
       router.replace("/");
@@ -90,9 +154,13 @@ export default function NewGamePage() {
 
   return (
     <main className="app-shell" style={{ paddingTop: "calc(24px + var(--safe-top))", paddingBottom: 40 }}>
-      <h1 style={{ fontSize: 24, fontWeight: 700, margin: "10px 4px", fontFamily: "var(--font-display)" }}>Start a company</h1>
+      <h1 style={{ fontSize: 24, fontWeight: 700, margin: "10px 4px", fontFamily: "var(--font-display)" }}>
+        {mode === "add" ? "Found another company" : "Start a company"}
+      </h1>
       <p style={{ color: "var(--color-ink-2)", fontSize: 14, margin: "0 4px 18px" }}>
-        Pick your vertical, set up your founder, and draft your first product. You can found additional companies in different verticals later.
+        {mode === "add"
+          ? `Pick the vertical, commit capital from your personal wealth (${money(personalWealth, { short: true })} available), and draft your first product.`
+          : "Pick your vertical, set up your founder, and draft your first product. You can found additional companies in different verticals later."}
       </p>
 
       <Section title="Vertical">
@@ -129,17 +197,64 @@ export default function NewGamePage() {
         </Options>
       </Section>
 
-      <Section title="Starting capital">
-        <Options>
-          {(Object.keys(CASH_META) as Cash[]).map(k => (
-            <OptionCard key={k} active={cash === k} onClick={() => setCash(k)}>
-              <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>{money(CASH_META[k].amount, { short: true })}</div>
-              <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>{CASH_META[k].label}</div>
-              <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>{CASH_META[k].desc}</div>
-            </OptionCard>
-          ))}
-        </Options>
-      </Section>
+      {mode === "new" ? (
+        <Section title="Starting capital">
+          <Options>
+            {(Object.keys(CASH_META) as Cash[]).map(k => (
+              <OptionCard key={k} active={cash === k} onClick={() => setCash(k)}>
+                <div className="mono" style={{ fontSize: 16, fontWeight: 700 }}>{money(CASH_META[k].amount, { short: true })}</div>
+                <div style={{ fontWeight: 700, fontSize: 13, marginTop: 4 }}>{CASH_META[k].label}</div>
+                <div style={{ fontSize: 11, color: "var(--color-ink-2)", marginTop: 2 }}>{CASH_META[k].desc}</div>
+              </OptionCard>
+            ))}
+          </Options>
+        </Section>
+      ) : (
+        <Section title="Invest from personal wealth">
+          <div className="themed-card" style={{ padding: "14px 16px", display: "grid", gap: 10 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+              <div className="mono" style={{ fontSize: 20, fontWeight: 700 }}>
+                {money(invest, { short: true })}
+              </div>
+              <div className="mono" style={{ fontSize: 11, color: "var(--color-ink-2)" }}>
+                of {money(personalWealth, { short: true })} available
+              </div>
+            </div>
+            <input
+              type="range"
+              min={Math.min(minSeed, personalWealth)}
+              max={Math.max(minSeed, personalWealth)}
+              step={1_000}
+              value={invest}
+              disabled={!canAffordCurrent}
+              onChange={(e) => setInvest(Number(e.target.value))}
+              style={{ width: "100%" }}
+            />
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 6 }}>
+              {[minSeed, Math.round(personalWealth / 2), personalWealth].map((v, i) => {
+                const disabled = v < minSeed || v > personalWealth;
+                const label = i === 0 ? "min" : i === 1 ? "half" : "all-in";
+                return (
+                  <button
+                    key={`${label}_${v}`}
+                    className="themed-btn"
+                    style={{ fontSize: 11, padding: "6px 8px", opacity: disabled ? 0.4 : 1 }}
+                    disabled={disabled}
+                    onClick={() => setInvest(v)}
+                  >
+                    {label} · {money(v, { short: true })}
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ fontSize: 11, color: "var(--color-ink-2)", lineHeight: 1.45 }}>
+              This is the new venture's opening cash balance. Personal wealth drops by the same amount.
+              Minimum seed for a {vertical === "saas" ? "SaaS" : "game studio"} is {money(minSeed, { short: true })}.
+              {!canAffordCurrent && <> You don&apos;t have enough personal wealth to fund this vertical yet.</>}
+            </div>
+          </div>
+        </Section>
+      )}
 
       {vertical === "saas" && (
         <Section title="First product category">
@@ -197,14 +312,19 @@ export default function NewGamePage() {
 
       <button
         onClick={submit}
+        disabled={mode === "add" && (!canAffordCurrent || !investValid)}
         style={{
-          background: "var(--color-accent)", color: "#fff",
+          background: mode === "add" && (!canAffordCurrent || !investValid)
+            ? "var(--color-muted)"
+            : "var(--color-accent)",
+          color: "#fff",
           border: "var(--border-card)", borderRadius: "var(--radius-card)",
           padding: "14px 18px", fontSize: 16, fontWeight: 700,
           boxShadow: "var(--shadow-card)", marginTop: 20, width: "100%",
+          cursor: mode === "add" && (!canAffordCurrent || !investValid) ? "not-allowed" : "pointer",
         }}
       >
-        {vertical === "saas" ? "Incorporate & begin" : "Open the studio"}
+        {submitLabel}
       </button>
     </main>
   );

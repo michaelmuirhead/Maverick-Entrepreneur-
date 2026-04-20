@@ -1,10 +1,12 @@
 import {
   AcquisitionDeal,
+  BuyoutOffer,
   Competitor,
   CompetitorStage,
   EconomyState,
   GameEvent,
   GameState,
+  ID,
   OfferTier,
   Product,
 } from "./types";
@@ -12,6 +14,7 @@ import { RNG, makeRng } from "./rng";
 import { derivePricing } from "./segments";
 import { arpuFor, revenueModelFor, segmentMixFor } from "./categories";
 import { economyValuationMultiplier } from "./economy";
+import { computeMrr } from "./finance";
 
 // ARPU and segment mix now live in CATEGORY_INFO. Re-export arpuFor so external
 // callers (competitors.ts, sim-harness) keep working without a direct categories.ts import.
@@ -541,4 +544,202 @@ export function runAiMandA(
   });
 
   return { competitors: nextCompetitors, deals: newDeals };
+}
+
+// ---------------------------------------------------------------------------
+// Incoming buyout offers — an AI acquirer decides to bid for the player
+// ---------------------------------------------------------------------------
+
+/** Per-offer window, in weeks, before the suitor walks. */
+const BUYOUT_WINDOW_WEEKS = 4;
+
+/** Max active offers the player can have at once. After that, suitors wait. */
+const MAX_ACTIVE_BUYOUT_OFFERS = 2;
+
+/** Cooldown before a declined suitor will consider re-approaching. */
+const DECLINED_BUYOUT_COOLDOWN_WEEKS = 20;
+
+/** Below this valuation the player isn't considered big enough to bid for. */
+const MIN_PLAYER_VALUATION_FOR_BUYOUT = 5_000_000;
+
+/** Heuristic stage for the player's own company — mirrors the competitor stage ladder. */
+function playerStage(state: GameState): CompetitorStage {
+  const mrr = computeMrr(state);
+  const products = state.products.length;
+  if (products === 0) return "scrappy";
+  if (mrr >= 1_000_000) return "mature";
+  if (mrr >=   100_000) return "growth";
+  if (mrr <     10_000) return "scrappy";
+  return "growth";
+}
+
+/**
+ * Fair valuation of the player's company. Mirrors `competitorValuation` but
+ * also reflects cash on hand (partially — cash is partly double-counted against
+ * ARR for M&A purposes because acquirers are paying for enterprise value).
+ */
+export function playerValuation(state: GameState): number {
+  const mrr = computeMrr(state);
+  const arr = mrr * 12;
+  const stage = playerStage(state);
+  const base = arr * STAGE_MULTIPLE[stage];
+  const cash = Math.max(0, state.finance.cash);
+  const vmul = state.economy ? economyValuationMultiplier(state.economy) : 1;
+  // Cash counts at 0.7× to avoid rewarding "just hoard cash" strategies.
+  return Math.max(500_000, Math.round(base * vmul + cash * 0.7));
+}
+
+/**
+ * Remove any buyout offers whose expiration week has passed. Emits a lightweight
+ * info event per expiry. Returns the pruned offer list — caller is responsible
+ * for reassigning to state.
+ */
+export function expireBuyoutOffers(state: GameState, events: GameEvent[]): BuyoutOffer[] {
+  const kept: BuyoutOffer[] = [];
+  for (const o of state.buyoutOffers ?? []) {
+    if (state.week >= o.expiresWeek) {
+      events.push({
+        id: `ev_${state.week}_buyout_expired_${o.id}`,
+        week: state.week, severity: "info",
+        message: `${o.acquirerName}'s $${(o.price / 1e6).toFixed(1)}M buyout offer expired without response. Their M&A team moves on.`,
+      });
+    } else {
+      kept.push(o);
+    }
+  }
+  return kept;
+}
+
+/**
+ * Roll dice on whether a cash-rich rival decides to pitch the player this week.
+ * At most one new offer per tick. Existing offers persist untouched; this only
+ * appends. Caller passes the already-expired offers list so we don't stack on
+ * top of lapsed ones.
+ */
+export function rollPlayerBuyoutOffers(
+  state: GameState, events: GameEvent[], rng: RNG,
+): BuyoutOffer[] {
+  const existing = state.buyoutOffers ?? [];
+  if (state.gameOver) return existing;
+  if (existing.length >= MAX_ACTIVE_BUYOUT_OFFERS) return existing;
+
+  const fair = playerValuation(state);
+  if (fair < MIN_PLAYER_VALUATION_FOR_BUYOUT) return existing;
+
+  // Suitors: growth or mature competitors with enough cash and no active offer
+  // or recent rejection against the player.
+  const suitors = state.competitors.filter(c => {
+    const stage = c.stage ?? "scrappy";
+    if (stage !== "mature" && stage !== "growth") return false;
+    if ((c.cash ?? 0) < fair * 0.9) return false;
+    if (c.rejectedBuyoutUntil && state.week < c.rejectedBuyoutUntil) return false;
+    if (existing.some(o => o.acquirerId === c.id)) return false;
+    return true;
+  });
+  if (suitors.length === 0) return existing;
+
+  // Low per-week probability so this stays a rare headline moment.
+  if (!rng.chance(0.03)) return existing;
+
+  const buyer = rng.pick(suitors);
+  // Always a premium — why would the player ever consider fair-value? Spread it
+  // generously so the decision has real weight: some offers are take-the-money,
+  // others are tempting but maybe leave-on-the-table.
+  const mult = rng.range(1.2, 2.2);
+  const price = Math.round(fair * mult);
+  const offer: BuyoutOffer = {
+    id: `buyout_${state.week}_${buyer.id}`,
+    week: state.week,
+    expiresWeek: state.week + BUYOUT_WINDOW_WEEKS,
+    acquirerId: buyer.id,
+    acquirerName: buyer.name,
+    fairValuation: fair,
+    price,
+    premiumMultiple: mult,
+    narrative: `${buyer.name} wants to acquire ${state.company.name} for $${(price / 1e6).toFixed(1)}M (${mult.toFixed(2)}× fair).`,
+  };
+
+  events.push({
+    id: `ev_${state.week}_buyout_${buyer.id}`,
+    week: state.week, severity: "warn",
+    message: `📨 ${buyer.name} has tabled an unsolicited $${(price / 1e6).toFixed(1)}M offer to acquire ${state.company.name}. Their M&A team calls it "a compelling path to scale." ${mult.toFixed(2)}× your fair valuation. Offer lapses in ${BUYOUT_WINDOW_WEEKS} weeks.`,
+  });
+
+  return [...existing, offer];
+}
+
+/**
+ * Player accepts a buyout — deal closes, cash hits the account, and the game
+ * ends with a game-over-via-success banner. Pure reducer; returns new state.
+ */
+export function acceptPlayerBuyout(state: GameState, offerId: ID): GameState {
+  if (state.gameOver) return state;
+  const offer = (state.buyoutOffers ?? []).find(o => o.id === offerId);
+  if (!offer) return state;
+  if (state.week >= offer.expiresWeek) return state;
+
+  const deal: AcquisitionDeal = {
+    id: `deal_${state.week}_${offer.acquirerId}_player`,
+    week: state.week,
+    acquirerId: offer.acquirerId,
+    acquirerName: offer.acquirerName,
+    targetId: "player",
+    targetName: state.company.name,
+    structure: "cash",
+    pricePaid: offer.price,
+    fairValuation: offer.fairValuation,
+    premiumMultiple: offer.premiumMultiple,
+    narrative: `${offer.acquirerName} acquired ${state.company.name} for $${(offer.price / 1e6).toFixed(1)}M.`,
+  };
+
+  return {
+    ...state,
+    buyoutOffers: [],
+    finance: { ...state.finance, cash: state.finance.cash + offer.price },
+    deals: [deal, ...(state.deals ?? [])].slice(0, 100),
+    gameOver: {
+      reason: "acquired",
+      week: state.week,
+      narrative: buyoutAcceptNarrative(offer, state),
+    },
+    events: [{
+      id: `ev_${state.week}_buyout_accept_${offer.id}`,
+      week: state.week, severity: "good",
+      message: `🎉 Deal closed: ${offer.acquirerName} acquires ${state.company.name} for $${(offer.price / 1e6).toFixed(1)}M (${offer.premiumMultiple.toFixed(2)}× fair). Cash hits the account; integration starts Monday. You've built something someone wanted badly enough to buy.`,
+    }, ...state.events],
+  };
+}
+
+/**
+ * Player declines an offer — the suitor goes back into a cooldown. No cash
+ * change, but the company valuation keeps ticking.
+ */
+export function declinePlayerBuyout(state: GameState, offerId: ID): GameState {
+  const offer = (state.buyoutOffers ?? []).find(o => o.id === offerId);
+  if (!offer) return state;
+  return {
+    ...state,
+    buyoutOffers: (state.buyoutOffers ?? []).filter(o => o.id !== offerId),
+    competitors: state.competitors.map(c => c.id === offer.acquirerId
+      ? { ...c, rejectedBuyoutUntil: state.week + DECLINED_BUYOUT_COOLDOWN_WEEKS }
+      : c),
+    events: [{
+      id: `ev_${state.week}_buyout_decline_${offer.id}`,
+      week: state.week, severity: "info",
+      message: `You passed on ${offer.acquirerName}'s $${(offer.price / 1e6).toFixed(1)}M buyout. Their M&A team is not thrilled. They'll be back in ${DECLINED_BUYOUT_COOLDOWN_WEEKS} weeks at earliest — or not at all if someone else buys them first.`,
+    }, ...state.events],
+  };
+}
+
+function buyoutAcceptNarrative(offer: BuyoutOffer, state: GameState): string {
+  const x = offer.premiumMultiple;
+  const mrr = computeMrr(state);
+  const years = state.week >= 52 ? `${(state.week / 52).toFixed(1)} years` : `${state.week} weeks`;
+  if (x >= 1.8) {
+    return `Against all odds, ${offer.acquirerName} paid a ${x.toFixed(2)}× premium to fold ${state.company.name} into their empire. $${(offer.price / 1e6).toFixed(1)}M — more than most founders see in a lifetime. ${years} of grinding. MRR at $${Math.round(mrr).toLocaleString()}. You didn't IPO, but you exited on your terms.`;
+  }
+  if (x >= 1.4) {
+    return `${offer.acquirerName} closed on ${state.company.name} for $${(offer.price / 1e6).toFixed(1)}M (${x.toFixed(2)}× fair). A strong exit. Cap table celebrates, earn-outs kick in, and the brand gets absorbed. The story you wrote in ${years} belongs to the acquirer now.`;
+  }
+  return `${offer.acquirerName} took ${state.company.name} off your hands for $${(offer.price / 1e6).toFixed(1)}M. Not a fairy-tale multiple, but a real outcome after ${years} of building. Money in the bank beats maybe-someday.`;
 }

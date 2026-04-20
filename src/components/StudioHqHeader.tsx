@@ -3,6 +3,7 @@ import { useGame } from "@/game/store";
 import { useTheme } from "./ThemeProvider";
 import { quarterLabel } from "@/lib/format";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { VentureSwitcher } from "./VentureSwitcher";
 import { GENRE_INFO } from "@/game/studio/genres";
 
 /**
@@ -27,7 +28,10 @@ export function StudioHqHeader() {
             {quarterLabel(s.week)} · W{s.week} · {s.company.stage.replace("-", " ")} · {genre.label} · {s.company.defaultScope}
           </div>
         </div>
-        <ThemeSwitcher />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <VentureSwitcher />
+          <ThemeSwitcher />
+        </div>
       </div>
     </header>
   );

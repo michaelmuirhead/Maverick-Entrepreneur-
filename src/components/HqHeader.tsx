@@ -3,6 +3,7 @@ import { useGame } from "@/game/store";
 import { useTheme } from "./ThemeProvider";
 import { quarterLabel } from "@/lib/format";
 import { ThemeSwitcher } from "./ThemeSwitcher";
+import { VentureSwitcher } from "./VentureSwitcher";
 
 export function HqHeader() {
   const s = useGame(st => st.state);
@@ -19,7 +20,10 @@ export function HqHeader() {
             {quarterLabel(s.week)} · W{s.week} · {s.company.stage.replace("-", " ")}
           </div>
         </div>
-        <ThemeSwitcher />
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <VentureSwitcher />
+          <ThemeSwitcher />
+        </div>
       </div>
     </header>
   );
